@@ -171,6 +171,11 @@
               <input id="goodRange" type="range" min="90" max="260" value="160" />
             </div>
 
+            <div class="rangeWrap">
+              <label><span>判定幅（OK ms）</span><span id="okV">1200</span></label>
+              <input id="okRange" type="range" min="300" max="3000" step="50" value="1200" />
+            </div>
+
             <label>
               <span>サウンド</span>
               <button id="soundBtn">🔊 ON</button>
@@ -305,7 +310,9 @@
   let perfectMs = 80;
   let goodMs = 160;
 
-  let soundMode = "sample"; // "sample" | "beep"
+  
+  let okMs = 1200;
+let soundMode = "sample"; // "sample" | "beep"
 
   let answer = [];
   let answerTimings = [];
@@ -341,10 +348,12 @@
   const tempoRange = document.getElementById("tempoRange");
   const perfRange = document.getElementById("perfRange");
   const goodRange = document.getElementById("goodRange");
+  const okRange = document.getElementById("okRange");
   const lenV = document.getElementById("lenV");
   const tempoV = document.getElementById("tempoV");
   const perfV = document.getElementById("perfV");
   const goodV = document.getElementById("goodV");
+  const okV = document.getElementById("okV");
 
   const soundBtn = document.getElementById("soundBtn");
   const soundSel = document.getElementById("soundSel");
@@ -472,18 +481,21 @@
   }
 
   function judgeSingle(pressedNote, pressedTime){
-    const ref = answerTimings[0] ?? pressedTime;
-    const diff = Math.abs(pressedTime - ref);
-    let timing = "MISS";
-    if (diff <= perfectMs) timing = "PERFECT";
-    else if (diff <= goodMs) timing = "GOOD";
+  const ref = answerTimings[0] ?? pressedTime;
+  const diff = Math.abs(pressedTime - ref);
 
-    const pitchOk = (pressedNote === answer[0]);
-    let overall = "MISS";
-    if (pitchOk && timing === "PERFECT") overall = "PERFECT";
-    else if (pitchOk && (timing === "GOOD" || timing === "PERFECT")) overall = "GOOD";
-    return {diff, timing, pitchOk, overall};
+  const pitchOk = (pressedNote === answer[0]);
+
+  let overall = "MISS";
+  if (pitchOk){
+    if (diff <= perfectMs) overall = "PERFECT";
+    else if (diff <= goodMs) overall = "GOOD";
+    else if (diff <= okMs) overall = "OK";
+    else overall = "MISS";
   }
+  const timing = overall; // 表示用
+  return {diff, timing, pitchOk, overall};
+}
 
   function judgeMelody(){
     const results = [];
@@ -494,22 +506,24 @@
       const tGot = inputTimings[i] ?? performance.now();
       const diff = Math.abs(tGot - tRef);
 
-      let timing = "MISS";
-      if (diff <= perfectMs) timing = "PERFECT";
-      else if (diff <= goodMs) timing = "GOOD";
-
       const pitchOk = (got === exp);
-      let overall = "MISS";
-      if (pitchOk && timing === "PERFECT") overall = "PERFECT";
-      else if (pitchOk && (timing === "GOOD" || timing === "PERFECT")) overall = "GOOD";
+let overall = "MISS";
+if (pitchOk){
+  if (diff <= perfectMs) overall = "PERFECT";
+  else if (diff <= goodMs) overall = "GOOD";
+  else if (diff <= okMs) overall = "OK";
+  else overall = "MISS";
+}
 
       results.push({i, got, exp, diff, overall});
     }
     const allPerfect = results.every(r => r.overall === "PERFECT");
-    const allGoodOrBetter = results.every(r => r.overall === "PERFECT" || r.overall === "GOOD");
-    let grade = "MISS";
-    if (allPerfect) grade = "PERFECT";
-    else if (allGoodOrBetter) grade = "GOOD";
+const allGoodOrBetter = results.every(r => r.overall === "PERFECT" || r.overall === "GOOD");
+const allOkOrBetter = results.every(r => r.overall === "PERFECT" || r.overall === "GOOD" || r.overall === "OK");
+let grade = "MISS";
+if (allPerfect) grade = "PERFECT";
+else if (allGoodOrBetter) grade = "GOOD";
+else if (allOkOrBetter) grade = "OK";
     return {results, grade};
   }
 
@@ -524,7 +538,12 @@
       streak += 1;
       setState("GOOD!", "good");
       beep(900, 0.06, 0.045);
-    } else {
+    } else if (grade === "OK"){
+  score += 70 + streak*3;
+  streak += 1;
+  setState("OK", "warn");
+  beep(650, 0.06, 0.04);
+} else {
       score = Math.max(0, score - 50);
       streak = 0;
       setState("MISS", "bad");
@@ -542,7 +561,6 @@
 
   async function onPressNote(note){
     ensureAudio();
-
     // feedback sound
     await playNoteOut(note, 160);
 
@@ -560,22 +578,12 @@
     inputTimings.push(now);
     renderChips(inputSeq, input.map(noteLabel), null);
 
-    // light up ONLY when the input is correct (pitch + timing)
-    if (mode === MODE.melody){
-      const i = input.length - 1;
-      const ref = answerTimings[i] ?? now;
-      const diff = Math.abs(now - ref);
-      const timingOk = (diff <= goodMs); // GOOD or PERFECT
-      const pitchOk = (note === answer[i]);
-      if (pitchOk && timingOk) flashKey(note);
-    }
-
     if (mode === MODE.single){
       const r = judgeSingle(note, now);
-      if (r.overall !== "MISS") flashKey(note);
       const jtxt = `${r.overall}（音:${r.pitchOk?"○":"×"} / timing:${r.timing} / ${Math.round(r.diff)}ms）`;
       renderChips(judgeSeq, [jtxt], () => (r.overall==="MISS" ? "ng":"ok"));
       award(r.overall);
+      if (r.overall !== "MISS") flashKey(note);
       if (r.overall === "MISS") showAnswerHint();
     } else {
       if (input.length >= melodyLen){
@@ -587,6 +595,7 @@
         });
         renderChips(judgeSeq, chips, (t,i) => r.results[i].overall==="MISS" ? "ng":"ok");
         award(r.grade);
+        if (r.grade !== "MISS") flashKey(note);
         if (r.grade === "MISS") showAnswerHint();
       } else {
         const left = melodyLen - input.length;
@@ -644,7 +653,9 @@
   perfRange.addEventListener("input", () => { perfectMs = Number(perfRange.value); perfV.textContent = perfectMs; });
   goodRange.addEventListener("input", () => { goodMs = Number(goodRange.value); goodV.textContent = goodMs; });
 
-  soundBtn.addEventListener("click", () => {
+  
+  okRange.addEventListener("input", () => { okMs = Number(okRange.value); okV.textContent = okMs; });
+soundBtn.addEventListener("click", () => {
     masterOn = !masterOn;
     soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
     if (masterOn) ensureAudio();
