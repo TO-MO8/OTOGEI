@@ -176,6 +176,14 @@
               <input id="okRange" type="range" min="300" max="3000" step="50" value="1200" />
             </div>
 
+            <label class="toggleRow">
+              <span>時間制限</span>
+              <span style="display:flex; gap:10px; align-items:center;">
+                <input id="noLimit" type="checkbox" />
+                <span>なし（音が合えばOK）</span>
+              </span>
+            </label>
+
             <label>
               <span>サウンド</span>
               <button id="soundBtn">🔊 ON</button>
@@ -349,6 +357,7 @@ let soundMode = "sample"; // "sample" | "beep"
   const perfRange = document.getElementById("perfRange");
   const goodRange = document.getElementById("goodRange");
   const okRange = document.getElementById("okRange");
+  const noLimit = document.getElementById("noLimit");
   const lenV = document.getElementById("lenV");
   const tempoV = document.getElementById("tempoV");
   const perfV = document.getElementById("perfV");
@@ -654,7 +663,25 @@ else if (allOkOrBetter) grade = "OK";
   goodRange.addEventListener("input", () => { goodMs = Number(goodRange.value); goodV.textContent = goodMs; });
 
   
-  okRange.addEventListener("input", () => { okMs = Number(okRange.value); okV.textContent = okMs; });
+  okRange.addEventListener("input", () => {
+  okMs = Number(okRange.value);
+  okV.textContent = okMs;
+});
+
+noLimit.addEventListener("change", () => {
+  if (noLimit.checked){
+    okMs = Infinity;
+    okV.textContent = "∞";
+    okRange.disabled = true;
+    okRange.style.opacity = "0.5";
+  } else {
+    okRange.disabled = false;
+    okRange.style.opacity = "1";
+    okMs = Number(okRange.value);
+    okV.textContent = okMs;
+  }
+});
+
 soundBtn.addEventListener("click", () => {
     masterOn = !masterOn;
     soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
