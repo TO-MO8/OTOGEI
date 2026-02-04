@@ -454,7 +454,7 @@
 
     if (mode === MODE.single){
       answerTimings = [performance.now() + 140];
-      setTimeout(() => { playNoteOut(answer[0], 420); flashKey(answer[0]); }, 140);
+      setTimeout(() => { playNoteOut(answer[0], 420); }, 140);
       setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, 700);
       msgEl.textContent = "単音を聴いたら、ドレミのどれか1つを押して当ててね。";
     } else {
@@ -464,7 +464,7 @@
       for (let i=0;i<answer.length;i++){
         const start = performance.now() + t;
         answerTimings.push(start);
-        setTimeout(() => { flashKey(answer[i]); playNoteOut(answer[i], 260); }, t);
+        setTimeout(() => { playNoteOut(answer[i], 260); }, t);
         t += tempoMs;
       }
       setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, t + 140);
@@ -542,7 +542,6 @@
 
   async function onPressNote(note){
     ensureAudio();
-    flashKey(note);
 
     // feedback sound
     await playNoteOut(note, 160);
@@ -561,8 +560,19 @@
     inputTimings.push(now);
     renderChips(inputSeq, input.map(noteLabel), null);
 
+    // light up ONLY when the input is correct (pitch + timing)
+    if (mode === MODE.melody){
+      const i = input.length - 1;
+      const ref = answerTimings[i] ?? now;
+      const diff = Math.abs(now - ref);
+      const timingOk = (diff <= goodMs); // GOOD or PERFECT
+      const pitchOk = (note === answer[i]);
+      if (pitchOk && timingOk) flashKey(note);
+    }
+
     if (mode === MODE.single){
       const r = judgeSingle(note, now);
+      if (r.overall !== "MISS") flashKey(note);
       const jtxt = `${r.overall}（音:${r.pitchOk?"○":"×"} / timing:${r.timing} / ${Math.round(r.diff)}ms）`;
       renderChips(judgeSeq, [jtxt], () => (r.overall==="MISS" ? "ng":"ok"));
       award(r.overall);
