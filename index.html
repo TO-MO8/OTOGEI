@@ -1,0 +1,840 @@
+
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>耳トレ：ピアノ生音（サンプル）対応</title>
+  <style>
+    :root{
+      --bg:#0b1020; --text:#e9eeff; --muted:#aab3d6;
+      --good:#7CFF9B; --bad:#FF6B6B; --warn:#FFD36B; --accent:#74b3ff;
+      --shadow: 0 16px 40px rgba(0,0,0,.35); --radius: 18px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", Meiryo, Arial, sans-serif;
+      background: radial-gradient(1200px 700px at 20% 10%, rgba(116,179,255,.18), transparent 55%),
+                  radial-gradient(900px 600px at 80% 25%, rgba(124,255,155,.12), transparent 60%),
+                  radial-gradient(800px 600px at 45% 90%, rgba(255,211,107,.10), transparent 55%),
+                  var(--bg);
+      color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:18px;
+    }
+    .app{width:min(980px,100%); display:grid; grid-template-columns:1.1fr .9fr; gap:16px;}
+    @media (max-width:860px){.app{grid-template-columns:1fr}}
+    .card{background: linear-gradient(180deg, rgba(18,26,52,.92), rgba(15,22,48,.92));
+      border:1px solid rgba(255,255,255,.08); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden;}
+    .header{padding:16px 18px; display:flex; justify-content:space-between; gap:12px;
+      border-bottom:1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02);}
+    h1{margin:0; font-size:18px; letter-spacing:.3px}
+    .sub{margin-top:6px; color:var(--muted); font-size:12px; line-height:1.4}
+    .controls{display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end;}
+    button, select, input[type="range"]{
+      border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color:var(--text);
+      padding:9px 12px; border-radius:12px; cursor:pointer; font-weight:700; font-size:13px;
+      transition: transform .06s ease, background .2s ease, border-color .2s ease;
+    }
+    button:hover, select:hover{background: rgba(255,255,255,.10)}
+    button:active{transform: translateY(1px)}
+    button.primary{background: rgba(116,179,255,.16); border-color: rgba(116,179,255,.35);}
+    button.danger{background: rgba(255,107,107,.12); border-color: rgba(255,107,107,.35);}
+    .main{padding:16px 18px 18px; display:grid; gap:12px;}
+    .panel{padding:14px; border-radius:16px; border:1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.16);}
+    .pill{display:inline-flex; align-items:center; gap:8px; padding:7px 10px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); font-weight:900; font-size:12px;}
+    .dot{width:10px;height:10px;border-radius:99px;background:rgba(255,255,255,.18); box-shadow:0 0 0 3px rgba(255,255,255,.06) inset}
+    .dot.good{background: rgba(124,255,155,.9); box-shadow: 0 0 18px rgba(124,255,155,.45)}
+    .dot.bad{background: rgba(255,107,107,.9); box-shadow: 0 0 18px rgba(255,107,107,.45)}
+    .dot.warn{background: rgba(255,211,107,.95); box-shadow: 0 0 18px rgba(255,211,107,.35)}
+    .kv{display:flex; gap:8px; align-items:baseline; flex-wrap:wrap}
+    .k{color:var(--muted); font-size:12px; font-weight:900}
+    .v{font-size:14px; font-weight:950}
+    .msg{color:var(--muted); font-size:12px; line-height:1.6; padding:10px 12px; border-radius:14px;
+      background: rgba(255,255,255,.04); border:1px dashed rgba(255,255,255,.10);}
+    /* --- Piano layout (no overlap: sharps above gaps, same size) --- */
+    .pianoWrap{width:100%; max-width:760px; margin:0 auto;}
+    /* 14 columns = half-steps. White keys span 2 columns, sharps also span 2 columns and start "between" whites. */
+    .pianoRow{display:grid; grid-template-columns:repeat(14,1fr); gap:0; align-items:stretch;}
+    .pianoRow.sharps{margin-bottom:10px;}
+    .pianoRow .key{width:100%; height:86px; margin:0 5px;} /* keep visual gap without breaking spans */
+    .pianoRow.whites .key{grid-column: span 2;}
+
+.key{height:78px; border-radius:16px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05);
+      cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:center; font-weight:950; letter-spacing:.5px;
+      position:relative; overflow:hidden; transition: transform .06s ease, background .2s ease, border-color .2s ease;}
+    .key:hover{background: rgba(255,255,255,.08)}
+    .key:active{transform: translateY(1px)}
+    .key .subtxt{position:absolute; bottom:8px; left:10px; font-size:11px; color:var(--muted); font-weight:800;}
+
+    /* Sharps look (same size as white keys) */
+    .key.sharp{
+      width: 100%;
+      height: 86px;
+      border-radius:16px;
+      background: rgba(0,0,0,.55);
+      border:1px solid rgba(255,255,255,.20);
+      display:flex; align-items:center; justify-content:center;
+      font-weight:950; letter-spacing:.5px;
+      position:relative; /* keep consistent with .key */
+    }
+    .key.sharp:hover{background: rgba(0,0,0,.62)}
+
+
+    .key.flash{border-color: rgba(116,179,255,.55); box-shadow: 0 0 26px rgba(116,179,255,.20); background: rgba(116,179,255,.12);}
+    .seq{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
+    .chip{padding:6px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.10); background: rgba(255,255,255,.05);
+      font-weight:900; font-size:12px;}
+    .chip.ok{border-color: rgba(124,255,155,.35); background: rgba(124,255,155,.10)}
+    .chip.ng{border-color: rgba(255,107,107,.35); background: rgba(255,107,107,.10)}
+    .side{padding:16px 18px 18px; display:grid; gap:12px;}
+    .sectionTitle{font-size:13px;color:var(--muted);font-weight:900;letter-spacing:.4px;margin:0 0 8px 0}
+    .line{height:1px;background:rgba(255,255,255,.08);margin:2px 0}
+    .small{font-size:12px;color:var(--muted);line-height:1.55}
+    label{display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--muted); font-size:12px; font-weight:800}
+    .rangeWrap{display:grid; gap:6px}
+    input[type="range"]{padding:0; height:34px}
+    code{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="card">
+      <div class="header">
+        <div>
+          <h1>耳トレ：音当て & メロディ当て（ピアノ生音）</h1>
+          <div class="sub">サンプル音源（録音ピアノ）を置くと、生音で鳴ります。無い場合は自動でビープにフォールバック。</div>
+        </div>
+        <div class="controls">
+          <span class="pill"><span class="dot warn" id="stateDot"></span><span id="stateText">READY</span></span>
+          <button class="primary" id="newBtn">問題出す</button>
+          <button id="playBtn">もう一回聴く</button>
+          <button class="danger" id="resetBtn">リセット</button>
+        </div>
+      </div>
+
+      <div class="main">
+        <div class="panel">
+          <div class="kv">
+            <div class="k">MODE</div><div class="v" id="modeV">単音当て</div>
+            <div style="width:14px"></div>
+            <div class="k">SCORE</div><div class="v" id="scoreV">0</div>
+            <div style="width:14px"></div>
+            <div class="k">STREAK</div><div class="v" id="streakV">0</div>
+          </div>
+          <div class="msg" id="msg">
+            「問題出す」を押してね。生音にしたい場合は <code>assets/piano/C4.mp3</code> みたいに音源を置いてから開く。
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="k" style="margin-bottom:6px;">入力した音（メロディモードでは順番が大事）</div>
+          <div class="seq" id="inputSeq"></div>
+          <div class="line"></div>
+          <div class="k" style="margin-bottom:6px;">判定</div>
+          <div class="seq" id="judgeSeq"></div>
+        </div>
+
+        <div class="panel">
+          <div class="k" style="margin-bottom:8px;">ドレミ ボタン（クリック or キーボード 1-7）</div>
+          
+          <div class="k" style="margin-bottom:8px;">鍵盤ボタン（白鍵: 1-7 / 黒鍵♯: Q-W-E-R-T）</div>
+
+          <div class="pianoWrap" aria-label="Piano keys">
+            <div class="pianoRow sharps" id="keysSharp">
+              <div class="key sharp" data-note="C#" style="grid-column: 2 / span 2;"><span>C#</span><span class="subtxt">Q</span></div>
+              <div class="key sharp" data-note="D#" style="grid-column: 4 / span 2;"><span>D#</span><span class="subtxt">W</span></div>
+              <div class="key sharp" data-note="F#" style="grid-column: 8 / span 2;"><span>F#</span><span class="subtxt">E</span></div>
+              <div class="key sharp" data-note="G#" style="grid-column: 10 / span 2;"><span>G#</span><span class="subtxt">R</span></div>
+              <div class="key sharp" data-note="A#" style="grid-column: 12 / span 2;"><span>A#</span><span class="subtxt">T</span></div>
+            </div>
+
+            <div class="pianoRow whites" id="keys">
+              <div class="key" data-note="C"><span>C</span><span class="subtxt">1</span></div>
+              <div class="key" data-note="D"><span>D</span><span class="subtxt">2</span></div>
+              <div class="key" data-note="E"><span>E</span><span class="subtxt">3</span></div>
+              <div class="key" data-note="F"><span>F</span><span class="subtxt">4</span></div>
+              <div class="key" data-note="G"><span>G</span><span class="subtxt">5</span></div>
+              <div class="key" data-note="A"><span>A</span><span class="subtxt">6</span></div>
+              <div class="key" data-note="B"><span>B</span><span class="subtxt">7</span></div>
+            </div>
+          </div>
+<div class="small" style="margin-top:10px;">
+            音源ファイル名の例：<code>C4.mp3</code> ... <code>B4.mp3</code>（♯は <code>Cs4.mp3</code> を推奨。<code>C#4.mp3</code> も対応）（拡張子は mp3 / wav / ogg OK）
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="side">
+        <div>
+          <div class="sectionTitle">設定</div>
+          <div class="row">
+            <label>
+              <span>モード</span>
+              <select id="modeSel">
+                <option value="single">単音当て</option>
+                <option value="melody">メロディ当て</option>
+              </select>
+            </label>
+
+            <label>
+              <span>オクターブ（基準）</span>
+              <select id="octSel">
+                <option value="4">4（C4=ド）</option>
+                <option value="3">3（低め）</option>
+                <option value="5">5（高め）</option>
+              </select>
+            </label>
+
+            <label class="toggleRow">
+              <span>♯を出題に含める</span>
+              <span style="display:flex; gap:10px; align-items:center;">
+                <input id="sharpQuiz" type="checkbox" />
+                <span>ON</span>
+              </span>
+            </label>
+
+            <div class="rangeWrap">
+              <label><span>メロディ長</span><span id="lenV">3</span></label>
+              <input id="lenRange" type="range" min="2" max="6" value="3" />
+            </div>
+
+            <div class="rangeWrap">
+              <label><span>テンポ（メロディ再生間隔ms）</span><span id="tempoV">430</span></label>
+              <input id="tempoRange" type="range" min="220" max="800" value="430" />
+            </div>
+
+            <div class="rangeWrap">
+              <label><span>判定幅（PERFECT ms）</span><span id="perfV">80</span></label>
+              <input id="perfRange" type="range" min="40" max="140" value="80" />
+            </div>
+
+            <div class="rangeWrap">
+              <label><span>判定幅（GOOD ms）</span><span id="goodV">160</span></label>
+              <input id="goodRange" type="range" min="90" max="260" value="160" />
+            </div>
+
+            <div class="rangeWrap">
+              <label><span>判定幅（OK ms）</span><span id="okV">1200</span></label>
+              <input id="okRange" type="range" min="300" max="3000" step="50" value="1200" />
+            </div>
+
+            <label class="toggleRow">
+              <span>時間制限</span>
+              <span style="display:flex; gap:10px; align-items:center;">
+                <input id="noLimit" type="checkbox" />
+                <span>なし（音が合えばOK）</span>
+              </span>
+            </label>
+
+            <label>
+              <span>サウンド</span>
+              <button id="soundBtn">🔊 ON</button>
+            </label>
+
+            <label>
+              <span>音色</span>
+              <select id="soundSel">
+                <option value="sample">🎹 ピアノ生音（サンプル）</option>
+                <option value="beep">🔔 ビープ（代替）</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="sectionTitle">生音にする手順</div>
+          <div class="small">
+            1) <code>assets/piano/</code> に C4〜B4 の音源を置く（♯も置くなら C#4 / Cs4 など）<br/>
+            2) この <code>index.html</code> を開く（ローカルでもOK）<br/>
+            3) 鳴らない場合は「音色」をビープに切替えれば動作確認できる
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="sectionTitle">補足</div>
+          <div class="small">
+            ブラウザによっては、ローカルファイルの読み込み制限でサンプルが読めないことがあります。<br/>
+            その場合は GitHub Pages に置くと確実です。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // -------------------------
+  // Audio: Samples (piano) + fallback beeps
+  // -------------------------
+  let audioCtx = null;
+  let masterOn = true;
+
+  const NOTE_NAMES = ["C","D","E","F","G","A","B"];
+  const SHARP_KEYS = ["C#","D#","F#","G#","A#"];
+  const ALL_NOTES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
+
+  function ensureAudio(){
+    if (!masterOn) return;
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+
+  function midiFromNote(name, octave){
+    // name: "C" or "C#" etc.
+    const letter = name[0];
+    const sharp = name.includes("#");
+    const baseMap = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+    let semi = baseMap[letter];
+    if (sharp) semi += 1;
+    // Wrap across octave if needed (e.g., B# == C next octave, though we don't use it)
+    if (semi >= 12){ semi -= 12; octave += 1; }
+    return 12 * (octave + 1) + semi;
+  }
+  function freqFromMidi(m){ return 440 * Math.pow(2, (m-69)/12); }
+  function noteLabel(n){ return `${n}（${JP[n]||n}）`; }
+
+  // tiny beep fallback
+  function beep(freq, dur=0.18, gain=0.045){
+    if (!masterOn) return;
+    ensureAudio();
+    if (soundMode === "sample") ensurePreload();
+    if (!audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t0); o.stop(t0 + dur + 0.03);
+  }
+
+  // Sample player (WebAudio: low-latency)
+// Place files like: assets/piano/C4.mp3 ... B4.mp3 (or wav/ogg)
+// Sharps: prefer Cs4.mp3 style (avoid '#'), but C#4.* is also supported.
+const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean}
+const EXT_TRY = ["mp3","wav","ogg"];
+let preloadPromise = null;
+
+async function fetchAndDecode(url){
+  const res = await fetch(url, { cache: "no-store" }).catch(() => null);
+  if (!res || !res.ok) return null;
+  const arr = await res.arrayBuffer();
+  ensureAudio();
+  if (!audioCtx) return null;
+  // decodeAudioData is async and can be slow once; we keep buffers cached
+  return await audioCtx.decodeAudioData(arr).catch(() => null);
+}
+
+async function loadSample(note, octave){
+  const key = `${note}${octave}`;
+  if (sampleBufCache.has(key)) return sampleBufCache.get(key);
+
+  const altKey = key.replace("#","s"); // C#4 -> Cs4
+  for (const ext of EXT_TRY){
+    // try exact filename first, then Cs4-style
+    const url1 = `assets/piano/${encodeURIComponent(key)}.${ext}`;     // C%234.mp3 for C#4.mp3
+    const url2 = `assets/piano/${encodeURIComponent(altKey)}.${ext}`; // Cs4.mp3
+    let buf = await fetchAndDecode(url1);
+    if (!buf) buf = await fetchAndDecode(url2);
+    if (buf){
+      const entry = { buf, ok:true };
+      sampleBufCache.set(key, entry);
+      return entry;
+    }
+  }
+  const entry = { buf:null, ok:false };
+  sampleBufCache.set(key, entry);
+  return entry;
+}
+
+async function preloadAllForOct(oct){
+  // preload common 12 notes for the selected octave to avoid "first press" lag
+  const list = ALL_NOTES.map(n => `${n}${oct}`);
+  for (const k of list){
+    const note = k.replace(/[0-9]/g,"").replace("s","#"); // not used; keep simple
+    // we call loadSample with original note names
+  }
+  for (const n of ALL_NOTES){
+    await loadSample(n, oct);
+  }
+}
+
+function ensurePreload(){
+  if (!preloadPromise){
+    preloadPromise = preloadAllForOct(octave).catch(() => {});
+  }
+  return preloadPromise;
+}
+
+function playBuffer(buf, gain=1.0){
+  if (!masterOn) return;
+  ensureAudio();
+  if (!audioCtx || !buf) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const g = audioCtx.createGain();
+  g.gain.value = gain;
+  src.connect(g).connect(audioCtx.destination);
+  // start immediately for low latency
+  src.start();
+}
+
+async function playSample(note, octave){
+  // If already cached, play immediately (no await on decode/fetch)
+  const key = `${note}${octave}`;
+  const cached = sampleBufCache.get(key);
+  if (cached && cached.ok && cached.buf){
+    playBuffer(cached.buf, 1.0);
+    return true;
+  }
+  // Otherwise, start loading in background and return false now (fallback beep this time)
+  loadSample(note, octave).then(entry => {
+    if (entry.ok && entry.buf) playBuffer(entry.buf, 1.0);
+  }).catch(() => {});
+  return false;
+}
+
+  // -------------------------
+  // Game state
+  // -------------------------
+  const MODE = { single:"single", melody:"melody" };
+  let mode = MODE.single;
+  let octave = 4;
+  let includeSharps = false;
+  let melodyLen = 3;
+  let tempoMs = 430;
+  let perfectMs = 80;
+  let goodMs = 160;
+
+  
+  let okMs = 1200;
+let soundMode = "sample"; // "sample" | "beep"
+
+  let answer = [];
+  let answerTimings = [];
+  let playing = false;
+
+  let input = [];
+  let inputTimings = [];
+
+  let score = 0;
+  let streak = 0;
+
+  // -------------------------
+  // UI
+  // -------------------------
+  const stateDot = document.getElementById("stateDot");
+  const stateText = document.getElementById("stateText");
+  const msgEl = document.getElementById("msg");
+
+  const modeV = document.getElementById("modeV");
+  const scoreV = document.getElementById("scoreV");
+  const streakV = document.getElementById("streakV");
+
+  const inputSeq = document.getElementById("inputSeq");
+  const judgeSeq = document.getElementById("judgeSeq");
+
+  const newBtn = document.getElementById("newBtn");
+  const playBtn = document.getElementById("playBtn");
+  const resetBtn = document.getElementById("resetBtn");
+
+  const modeSel = document.getElementById("modeSel");
+  const octSel = document.getElementById("octSel");
+  const sharpQuiz = document.getElementById("sharpQuiz");
+  const lenRange = document.getElementById("lenRange");
+  const tempoRange = document.getElementById("tempoRange");
+  const perfRange = document.getElementById("perfRange");
+  const goodRange = document.getElementById("goodRange");
+  const okRange = document.getElementById("okRange");
+  const noLimit = document.getElementById("noLimit");
+  const lenV = document.getElementById("lenV");
+  const tempoV = document.getElementById("tempoV");
+  const perfV = document.getElementById("perfV");
+  const goodV = document.getElementById("goodV");
+  const okV = document.getElementById("okV");
+
+  const soundBtn = document.getElementById("soundBtn");
+  const soundSel = document.getElementById("soundSel");
+
+  const keysWrap = document.getElementById("keys");
+  const keysSharpWrap = document.getElementById("keysSharp");
+
+  function layoutSharps(){
+    // No-overlap layout uses CSS grid.
+    // (Older versions positioned sharps absolutely. That made them "fly away" on some screens.)
+    return;
+  }
+
+  // keep for compatibility (no-op)
+  window.addEventListener('resize', layoutSharps);
+  window.addEventListener('load', layoutSharps);
+
+  const keyEls = [...document.querySelectorAll(".key")];
+
+  function setState(text, kind="warn"){
+    stateText.textContent = text;
+    stateDot.classList.remove("good","bad","warn");
+    stateDot.classList.add(kind);
+  }
+  function flashKey(note){
+    const el = keyEls.find(k => k.dataset.note === note);
+    if (!el) return;
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 160);
+  }
+  function renderChips(targetEl, arr, classer){
+    targetEl.innerHTML = "";
+    if (!arr.length){
+      const empty = document.createElement("span");
+      empty.className = "chip";
+      empty.style.opacity = "0.6";
+      empty.textContent = "（なし）";
+      targetEl.appendChild(empty);
+      return;
+    }
+    arr.forEach((t, i) => {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      const cls = classer ? classer(t,i) : "";
+      if (cls) chip.classList.add(cls);
+      chip.textContent = t;
+      targetEl.appendChild(chip);
+    });
+  }
+  function updateHeader(){
+    modeV.textContent = (mode === MODE.single) ? "単音当て" : `メロディ当て（${melodyLen}音）`;
+    scoreV.textContent = score;
+    streakV.textContent = streak;
+  }
+  function resetRoundUI(){
+    input = [];
+    inputTimings = [];
+    renderChips(inputSeq, [], null);
+    renderChips(judgeSeq, [], null);
+  }
+
+  function randNote(){
+    const pool = includeSharps ? ALL_NOTES : NOTE_NAMES;
+    return pool[Math.floor(Math.random()*pool.length)];
+  }
+
+  function makeMelody(len){
+    // Sharps are allowed -> keep it simple: random melody from the chosen pool
+    if (includeSharps){
+      const pool = ALL_NOTES;
+      const seq = [];
+      for (let i=0;i<len;i++){
+        seq.push(pool[Math.floor(Math.random()*pool.length)]);
+      }
+      if (new Set(seq).size === 1) seq[Math.floor(Math.random()*len)] = randNote();
+      return seq;
+    }
+
+    // Naturals only (original patterns)
+    const types = ["step","zigzag","repeat","triadish","random"];
+    const t = types[Math.floor(Math.random()*types.length)];
+    let idx = Math.floor(Math.random()*7);
+    const seq = [];
+    for (let i=0;i<len;i++){
+      if (t === "step"){
+        const d = (Math.random()<0.5? -1: 1);
+        idx = Math.max(0, Math.min(6, idx + d));
+      } else if (t === "zigzag"){
+        const d = (i%2===0? 1 : -1) * (Math.random()<0.25?2:1);
+        idx = Math.max(0, Math.min(6, idx + d));
+      } else if (t === "repeat"){
+        if (Math.random()<0.45 && i>0){
+          idx = idx;
+        } else {
+          idx = Math.floor(Math.random()*7);
+        }
+      } else if (t === "triadish"){
+        const tri = [0,2,4];
+        idx = tri[Math.floor(Math.random()*tri.length)];
+      } else {
+        idx = Math.floor(Math.random()*7);
+      }
+      seq.push(NOTE_NAMES[idx]);
+    }
+    if (new Set(seq).size === 1) seq[Math.floor(Math.random()*len)] = randNote();
+    return seq;
+  }
+
+  function buildAnswer(){
+    answer = (mode === MODE.single) ? [randNote()] : makeMelody(melodyLen);
+  }
+
+  async function playNoteOut(note, durMs){
+    // returns true if sample used
+    if (!masterOn) return true;
+    if (soundMode === "sample"){
+      const ok = await playSample(note, octave);
+      if (ok) return true;
+      // fallback beep if missing sample
+    }
+    const m = midiFromNote(note, octave);
+    beep(freqFromMidi(m), Math.max(0.08, durMs/1000), 0.05);
+    return false;
+  }
+
+  async function playAnswer(){
+    if (!answer.length || playing) return;
+    playing = true;
+    setState("LISTEN", "warn");
+    ensureAudio();
+
+    // count-in
+    beep(1000, 0.06, 0.05);
+
+    if (mode === MODE.single){
+      answerTimings = [performance.now() + 140];
+      setTimeout(() => { playNoteOut(answer[0], 420); }, 140);
+      setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, 700);
+      msgEl.textContent = "単音を聴いたら、ドレミのどれか1つを押して当ててね。";
+    } else {
+      answerTimings = [];
+      let t = 160;
+      msgEl.textContent = "メロディを聴いたら、同じ順番で入力してね。";
+      for (let i=0;i<answer.length;i++){
+        const start = performance.now() + t;
+        answerTimings.push(start);
+        setTimeout(() => { playNoteOut(answer[i], 260); }, t);
+        t += tempoMs;
+      }
+      setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, t + 140);
+    }
+  }
+
+  function judgeSingle(pressedNote, pressedTime){
+  const ref = answerTimings[0] ?? pressedTime;
+  const diff = Math.abs(pressedTime - ref);
+
+  const pitchOk = (pressedNote === answer[0]);
+
+  let overall = "MISS";
+  if (pitchOk){
+    if (diff <= perfectMs) overall = "PERFECT";
+    else if (diff <= goodMs) overall = "GOOD";
+    else if (diff <= okMs) overall = "OK";
+    else overall = "MISS";
+  }
+  const timing = overall; // 表示用
+  return {diff, timing, pitchOk, overall};
+}
+
+  function judgeMelody(){
+    const results = [];
+    for (let i=0;i<answer.length;i++){
+      const got = input[i];
+      const exp = answer[i];
+      const tRef = answerTimings[i] ?? inputTimings[i] ?? performance.now();
+      const tGot = inputTimings[i] ?? performance.now();
+      const diff = Math.abs(tGot - tRef);
+
+      const pitchOk = (got === exp);
+let overall = "MISS";
+if (pitchOk){
+  if (diff <= perfectMs) overall = "PERFECT";
+  else if (diff <= goodMs) overall = "GOOD";
+  else if (diff <= okMs) overall = "OK";
+  else overall = "MISS";
+}
+
+      results.push({i, got, exp, diff, overall});
+    }
+    const allPerfect = results.every(r => r.overall === "PERFECT");
+const allGoodOrBetter = results.every(r => r.overall === "PERFECT" || r.overall === "GOOD");
+const allOkOrBetter = results.every(r => r.overall === "PERFECT" || r.overall === "GOOD" || r.overall === "OK");
+let grade = "MISS";
+if (allPerfect) grade = "PERFECT";
+else if (allGoodOrBetter) grade = "GOOD";
+else if (allOkOrBetter) grade = "OK";
+    return {results, grade};
+  }
+
+  function award(grade){
+    if (grade === "PERFECT"){
+      score += 200 + streak*8;
+      streak += 1;
+      setState("PERFECT!", "good");
+      beep(1200, 0.06, 0.05);
+    } else if (grade === "GOOD"){
+      score += 120 + streak*5;
+      streak += 1;
+      setState("GOOD!", "good");
+      beep(900, 0.06, 0.045);
+    } else if (grade === "OK"){
+  score += 70 + streak*3;
+  streak += 1;
+  setState("OK", "warn");
+  beep(650, 0.06, 0.04);
+} else {
+      score = Math.max(0, score - 50);
+      streak = 0;
+      setState("MISS", "bad");
+      beep(180, 0.10, 0.05);
+    }
+    updateHeader();
+  }
+
+  function showAnswerHint(){
+    const label = (mode === MODE.single)
+      ? `正解：${noteLabel(answer[0])}`
+      : `正解：${answer.map(n=>noteLabel(n)).join(" → ")}`;
+    msgEl.textContent = label + "（「問題出す」で次へ）";
+  }
+
+  async function onPressNote(note){
+    ensureAudio();
+    // feedback sound
+    playNoteOut(note, 160);
+
+    if (!answer.length){
+      msgEl.textContent = "まず「問題出す」を押してね。";
+      return;
+    }
+    if (playing){
+      msgEl.textContent = "いま再生中。終わってから入力してね。";
+      return;
+    }
+
+    const now = performance.now();
+    input.push(note);
+    inputTimings.push(now);
+    renderChips(inputSeq, input.map(noteLabel), null);
+
+    if (mode === MODE.single){
+      const r = judgeSingle(note, now);
+      const jtxt = `${r.overall}（音:${r.pitchOk?"○":"×"} / timing:${r.timing} / ${Math.round(r.diff)}ms）`;
+      renderChips(judgeSeq, [jtxt], () => (r.overall==="MISS" ? "ng":"ok"));
+      award(r.overall);
+      if (r.overall !== "MISS") flashKey(note);
+      if (r.overall === "MISS") showAnswerHint();
+    } else {
+      if (input.length >= melodyLen){
+        const r = judgeMelody();
+        const chips = r.results.map(x => {
+          const a = noteLabel(x.exp);
+          const g = x.got ? noteLabel(x.got) : "（未入力）";
+          return `${x.overall}：${g} / 正:${a}（${Math.round(x.diff)}ms）`;
+        });
+        renderChips(judgeSeq, chips, (t,i) => r.results[i].overall==="MISS" ? "ng":"ok");
+        award(r.grade);
+        if (r.grade !== "MISS") flashKey(note);
+        if (r.grade === "MISS") showAnswerHint();
+      } else {
+        const left = melodyLen - input.length;
+        msgEl.textContent = `あと ${left} 音入力してね。`;
+      }
+    }
+  }
+
+  function newQuestion(){
+    resetRoundUI();
+    buildAnswer();
+    setState("LISTEN", "warn");
+    msgEl.textContent = "聴く準備…";
+    playAnswer();
+  }
+
+  function resetAll(){
+    score = 0; streak = 0;
+    answer = []; answerTimings = [];
+    resetRoundUI();
+    updateHeader();
+    setState("READY", "warn");
+    msgEl.textContent = "「問題出す」を押して、音だけで当ててね。";
+  }
+
+  // Events
+  newBtn.addEventListener("click", () => { ensureAudio(); if (soundMode === "sample") ensurePreload(); newQuestion(); });
+  playBtn.addEventListener("click", () => { ensureAudio(); if (soundMode === "sample") ensurePreload(); playAnswer(); });
+  resetBtn.addEventListener("click", () => resetAll());
+
+  function onAnyKeyPointerDown(e){
+    const el = e.target.closest(".key");
+    if (!el) return;
+    onPressNote(el.dataset.note);
+  }
+  keysWrap.addEventListener("pointerdown", onAnyKeyPointerDown);
+  keysSharpWrap.addEventListener("pointerdown", onAnyKeyPointerDown);
+  window.addEventListener("keydown", (e) => {
+    const k = e.key;
+
+    if (k >= "1" && k <= "7"){
+      e.preventDefault();
+      onPressNote(NOTE_NAMES[Number(k)-1]);
+      return;
+    }
+    const low = k.toLowerCase();
+    const map = {q:"C#", w:"D#", e:"F#", r:"G#", t:"A#"};
+    if (map[low]){
+      e.preventDefault();
+      onPressNote(map[low]);
+      return;
+    }
+  });
+
+  modeSel.addEventListener("change", () => { mode = modeSel.value; resetAll(); });
+  octSel.addEventListener("change", () => { octave = Number(octSel.value); resetAll(); });
+
+  sharpQuiz.addEventListener("change", () => { includeSharps = !!sharpQuiz.checked; resetAll(); });
+
+  lenRange.addEventListener("input", () => {
+    melodyLen = Number(lenRange.value);
+    lenV.textContent = melodyLen;
+    updateHeader();
+    resetAll();
+  });
+  tempoRange.addEventListener("input", () => { tempoMs = Number(tempoRange.value); tempoV.textContent = tempoMs; });
+
+  perfRange.addEventListener("input", () => { perfectMs = Number(perfRange.value); perfV.textContent = perfectMs; });
+  goodRange.addEventListener("input", () => { goodMs = Number(goodRange.value); goodV.textContent = goodMs; });
+
+  
+  okRange.addEventListener("input", () => {
+  okMs = Number(okRange.value);
+  okV.textContent = okMs;
+});
+
+noLimit.addEventListener("change", () => {
+  if (noLimit.checked){
+    okMs = Infinity;
+    okV.textContent = "∞";
+    okRange.disabled = true;
+    okRange.style.opacity = "0.5";
+  } else {
+    okRange.disabled = false;
+    okRange.style.opacity = "1";
+    okMs = Number(okRange.value);
+    okV.textContent = okMs;
+  }
+});
+
+soundBtn.addEventListener("click", () => {
+    masterOn = !masterOn;
+    soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
+    if (masterOn) ensureAudio();
+  });
+
+  soundSel.addEventListener("change", () => { soundMode = soundSel.value; if (soundMode === "sample") ensurePreload(); });
+
+  // init
+  lenV.textContent = melodyLen;
+  tempoV.textContent = tempoMs;
+  perfV.textContent = perfectMs;
+  goodV.textContent = goodMs;
+
+  updateHeader();
+  resetAll();
+  layoutSharps();
+})();
+</script>
+</body>
+</html>
