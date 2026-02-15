@@ -19,7 +19,7 @@
                   radial-gradient(800px 600px at 45% 90%, rgba(255,211,107,.10), transparent 55%),
                   var(--bg);
       color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:18px;
-    }
+     overflow-x:hidden; }
     .app{width:min(980px,100%); display:grid; grid-template-columns:1.1fr .9fr; gap:16px;}
     @media (max-width:860px){.app{grid-template-columns:1fr}}
     .card{background: linear-gradient(180deg, rgba(18,26,52,.92), rgba(15,22,48,.92));
@@ -29,7 +29,45 @@
     h1{margin:0; font-size:18px; letter-spacing:.3px}
     .sub{margin-top:6px; color:var(--muted); font-size:12px; line-height:1.4}
     .controls{display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end;}
-    button, select, input[type="range"]{
+    
+
+    /* --- Layout helpers for settings rows --- */
+    .row{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+    .label{min-width:110px; font-weight:800; color:rgba(255,255,255,.85);}
+    .hint{color:rgba(255,255,255,.62); font-size:12px; line-height:1.35;}
+    input[type="file"]{max-width:100%; font-size:12px; padding:8px 10px;}
+    select{max-width:100%;}
+    button.btn{white-space:nowrap;}
+    /* --- Range slider --- */
+    input[type="range"]{
+      -webkit-appearance:none; appearance:none;
+      width:100%;
+      height:6px;
+      padding:0;
+      border:none;
+      background:rgba(255,255,255,.14);
+      border-radius:999px;
+      cursor:pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb{
+      -webkit-appearance:none; appearance:none;
+      width:18px; height:18px; border-radius:50%;
+      background:rgba(255,255,255,.92);
+      border:1px solid rgba(0,0,0,.25);
+      box-shadow: 0 6px 18px rgba(0,0,0,.25);
+    }
+    input[type="range"]::-moz-range-thumb{
+      width:18px; height:18px; border-radius:50%;
+      background:rgba(255,255,255,.92);
+      border:1px solid rgba(0,0,0,.25);
+    }
+    /* Prevent right panel clipping on narrow view */
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;max-width:1280px;margin:0 auto;padding:18px}
+
+    @media (max-width: 1100px){ .grid{grid-template-columns: 1fr !important;} }
+    .panel{overflow:auto; max-height:calc(100vh - 140px);}
+
+button, select, input[type="file"]{
       border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color:var(--text);
       padding:9px 12px; border-radius:12px; cursor:pointer; font-weight:700; font-size:13px;
       transition: transform .06s ease, background .2s ease, border-color .2s ease;
@@ -145,6 +183,7 @@
         </div>
         <div class="controls">
           <span class="pill"><span class="dot warn" id="stateDot"></span><span id="stateText">READY</span></span>
+          <button id="unlockBtn" class="ghost">🔊 音を有効化</button>
           <button class="primary" id="newBtn">問題出す</button>
           <button id="playBtn">もう一回聴く</button>
           <button class="danger" id="resetBtn">リセット</button>
@@ -219,6 +258,39 @@
             </label>
 
             <label>
+              <span>出題ソース</span>
+              <select id="srcSel" disabled>
+                <option value="song">知ってる曲</option>
+              </select>
+            </label>
+
+            <label id="songWrap" style="display:none">
+              <span>曲</span>
+              <select id="songSel">
+                <option value="twinkle">きらきら星</option>
+                <option value="mary">メリーさんのひつじ</option>
+                <option value="ode">よろこびのうた（Ode to Joy）</option>
+              </select>
+              <div class="row" style="margin-top:8px">
+                <label class="label">MIDI読み込み：</label>
+                <input id="midiFile" type="file" accept=".mid,.midi" />
+                <button id="midiLoadBtn" class="btn">読み込む</button>
+                <button id="midiPreview8Btn" class="btn" title="選択中トラックを8秒プレビュー">8秒プレビュー</button>
+              </div>
+              <div class="row" style="margin-top:6px">
+                <label class="label">MIDIトラック：</label>
+                <select id="midiTrackSel" style="min-width:260px; max-width:100%;" disabled>
+                  <option value="">（未読み込み）</option>
+                </select>
+                <button id="midiUseTrackBtn" class="btn" disabled>このトラックを曲として使う</button>
+              </div>
+              <div class="hint" id="midiHint" style="margin-top:6px">
+  ① MIDIを選ぶ → ②「読み込む」→ ③ 上のリストでトラック選択 → ④「このトラックを曲として使う」→ ⑤「問題出す」
+</div>
+
+              
+</label>
+<label>
               <span>オクターブ（基準）</span>
               <select id="octSel">
                 <option value="4">4（C4=ド）</option>
@@ -236,8 +308,8 @@
             </label>
 
             <div class="rangeWrap">
-              <label><span>メロディ長</span><span id="lenV">3</span></label>
-              <input id="lenRange" type="range" min="2" max="6" value="3" />
+              <label><span>メロディ長（最大20）</span><span id="lenV">3</span></label>
+              <input id="lenRange" type="range" min="2" max="20" value="3" />
             </div>
 
             <div class="rangeWrap">
@@ -306,6 +378,29 @@
     </div>
   </div>
 <script>
+
+
+
+// === Global audio bootstrap (safe) ===
+window.masterOn = (typeof window.masterOn==="boolean") ? window.masterOn : true;
+window.audioCtx = window.audioCtx || null;
+window.ensureAudio = window.ensureAudio || function(){
+  if (!window.masterOn) return null;
+  const Ctor = (window.AudioContext || window.webkitAudioContext);
+  if (!Ctor) return null;
+  if (!window.audioCtx){
+    try { window.audioCtx = new Ctor({ latencyHint: "interactive" }); }
+    catch(e){ window.audioCtx = new Ctor(); }
+  }
+  if (window.audioCtx.state === "suspended") window.audioCtx.resume();
+  return window.audioCtx;
+};
+// local alias
+const ensureAudio = window.ensureAudio;
+
+window.masterOn = (typeof window.masterOn==="boolean") ? window.masterOn : true;
+// === Force known-songs key to C (0) ===
+const FORCE_SONG_KEY_PC = 0;
 (() => {
   // -------------------------
   // Audio: Samples (piano) + fallback beeps
@@ -316,6 +411,34 @@
   const NOTE_NAMES = ["C","D","E","F","G","A","B"];
   const SHARP_KEYS = ["C#","D#","F#","G#","A#"];
   const ALL_NOTES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  window.SONGS = window.SONGS || {
+
+    twinkle: {
+      title: "きらきら星",
+      // C C G G A A G | F F E E D D C | G G F F E E D | G G F F E E D | C C G G A A G | F F E E D D C
+      notes: ["C","C","G","G","A","A","G","F","F","E","E","D","D","C","G","G","F","F","E","E","D","G","G","F","F","E","E","D","C","C","G","G","A","A","G","F","F","E","E","D","D","C"]
+    },
+    mary: {
+      title: "メリーさんのひつじ",
+      // E D C D E E E | D D D | E G G | E D C D E E E E | D D E D C
+      notes: ["E","D","C","D","E","E","E","D","D","D","E","G","G","E","D","C","D","E","E","E","E","D","D","E","D","C"]
+    },
+    ode: {
+      title: "よろこびのうた",
+      // E E F G | G F E D | C C D E | E D D | E E F G | G F E D | C C D E | D C C
+      notes: ["E","E","F","G","G","F","E","D","C","C","D","E","E","D","D","E","E","F","G","G","F","E","D","C","C","D","E","D","C","C"]
+    }
+  };
+
+  const SONGS = window.SONGS;
+
+  const __PC = {C:0,"C#":1,D:2,"D#":3,E:4,F:5,"F#":6,G:7,"G#":8,A:9,"A#":10,B:11};
+  function transposeNoteName(n, shiftPc){
+    const pc = __PC[n];
+    if (pc == null) return n;
+    return ALL_NOTES[(pc + shiftPc + 120) % 12];
+  }
+
   // -------------------------
   // Web MIDI (External synth)
   // -------------------------
@@ -397,12 +520,15 @@
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
 
   function ensureAudio(){
-    if (!masterOn) return;
+    if (!masterOn) return null;
+    const Ctor = (window.AudioContext || window.webkitAudioContext);
+    if (!Ctor) return null;
     if (!audioCtx){
-      const Ctor = (window.AudioContext || window.webkitAudioContext);
-      try{ audioCtx = new Ctor(); }catch(e){ audioCtx = new Ctor(); }
+      try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
+      catch(e){ audioCtx = new Ctor(); }
     }
-    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
   }
 
   function midiFromNote(name, octave){
@@ -727,6 +853,11 @@ async function playSample(note, octave){
   // -------------------------
   const MODE = { single:"single", melody:"melody", chord2:"chord2" };
   let mode = MODE.single;
+  let qSource = "song";
+  let songKey = "twinkle";
+  let songPos = 0;
+  let songShiftPc = 0;
+  let songKeyMode = "original";
   let octave = 4;
   let includeSharps = false;
   let melodyLen = 3;
@@ -767,6 +898,20 @@ let soundMode = "synth"; // "sample" | "beep"
   const resetBtn = document.getElementById("resetBtn");
 
   const modeSel = document.getElementById("modeSel");
+
+  const srcSel = document.getElementById("srcSel");
+  setTimeout(()=>{ try{ refreshSongUi(); }catch(e){} }, 0);
+  const songSel = document.getElementById("songSel");
+  const songWrap = document.getElementById("songWrap");
+
+  function refreshSongUi(){
+    const on = (srcSel && srcSel.value === "song");
+    // Always show controls so user can find MIDI import easily
+    if (songWrap) songWrap.style.display = "block";
+        // Visual hint
+    if (songWrap) songWrap.style.opacity = on ? "1" : "0.6";
+      }
+
   const octSel = document.getElementById("octSel");
   const sharpQuiz = document.getElementById("sharpQuiz");
   const lenRange = document.getElementById("lenRange");
@@ -957,38 +1102,105 @@ let soundMode = "synth"; // "sample" | "beep"
   function buildAnswer(){
     if (mode === MODE.chord2){
       answer = generateChord2Answer();
-    } else {
-      answer = (mode === MODE.single) ? [randNote()] : makeMelody(melodyLen);
+      return;
     }
+
+    if (qSource === "song"){
+      const s = SONGS[songKey] || SONGS.twinkle;
+      const base = s.notes;
+      if (!base || !base.length){
+        answer = (mode === MODE.single) ? [randNote()] : makeMelody(melodyLen);
+        return;
+      }
+
+      if (mode === MODE.single){
+        const n = base[songPos % base.length];
+        songPos = (songPos + 1) % base.length;
+        answer = [transposeNoteName(n, songShiftPc)];
+      } else {
+        const seq = [];
+        const __songLen = Math.max(melodyLen, 16);
+        for (let i=0;i<__songLen;i++){
+          const n = base[(songPos + i) % base.length];
+          seq.push(transposeNoteName(n, songShiftPc));
+        }
+        songPos = (songPos + __songLen) % base.length;
+        answer = seq;
+      }
+      return;
+    }
+
+    // random
+    answer = (mode === MODE.single) ? [randNote()] : makeMelody(melodyLen);
   }
 
-  async function playNoteOut(note, durMs){
+  function normalizeNoteInput(note, fallbackOct=4){
+    // Accepts: "C", "C#"; "C4"/"C#4"/"Cs4"; or object {n:"C", o:4} or {name:"C", octave:4}
+    if (note == null) return { name: "C", octave: fallbackOct }; // safe default
+    if (typeof note === "string"){
+      let s = note.trim();
+      // support "Cs4" style
+      s = s.replace(/^([A-G])s(\d)$/i, (_,L,O)=> `${L.toUpperCase()}#${O}`);
+      const m = s.match(/^([A-Ga-g])(#?)(\d)?$/);
+      if (m){
+        const name = (m[1].toUpperCase()) + (m[2]||"");
+        const oct = (m[3] != null) ? parseInt(m[3],10) : fallbackOct;
+        return { name, octave: oct };
+      }
+      // support "C#4" with accidental after letter already handled; otherwise return as-is
+      return { name: s, octave: fallbackOct };
+    }
+    if (typeof note === "number"){
+      // treat as midi number
+      const m = Math.round(note);
+      const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+      const name = names[m % 12];
+      const oct = Math.floor(m/12) - 1;
+      return { name, octave: oct };
+    }
+    if (typeof note === "object"){
+      const n = note.n ?? note.note ?? note.name ?? note.noteName;
+      const o = note.o ?? note.oct ?? note.octave ?? note.O;
+      const parsed = normalizeNoteInput(n ?? "C", (o!=null?o:fallbackOct));
+      if (o!=null) parsed.octave = parseInt(o,10);
+      return parsed;
+    }
+    return { name: "C", octave: fallbackOct };
+  }
+
+async function playNoteOut(note, durMs){
     // returns true if sample used (or sound suppressed)
     if (!masterOn) return true;
+
+    const { name: noteName, octave: useOct } = normalizeNoteInput(note, octave);
 
     // Built-in piano synth (no external files)
     if (soundMode === "gmpiano"){
       // embedded sample-based GM-ish piano
-      playGmPiano(note, octave, durMs, 0.95);
+      playGmPiano(noteName, useOct, durMs, 0.95);
       return true;
     }
 
     if (soundMode === "synth"){
-      const m = midiFromNote(note, octave);
+      const m = midiFromNote(noteName, useOct);
       synthPiano(freqFromMidi(m), durMs, 0.95);
       return true;
     }
 
     // Samples (piano) + fallback beeps
     if (soundMode === "sample"){
-      const ok = await playSample(note, octave);
+      const ok = await playSample(noteName, useOct);
       if (ok) return true;
       // fallback beep if missing sample
     }
-    const m = midiFromNote(note, octave);
+    const m = midiFromNote(noteName, useOct);
     beep(freqFromMidi(m), Math.max(0.08, durMs/1000), 0.05);
     return false;
   }
+
+// expose for preview/handlers outside IIFE
+try{ window.playNoteOut = playNoteOut; }catch(e){}
+
 
   async function playAnswer(){
     if (!answer.length || playing) return;
@@ -1001,15 +1213,15 @@ let soundMode = "synth"; // "sample" | "beep"
 
     if (mode === MODE.single){
       answerTimings = [performance.now() + 140];
-      setTimeout(() => { playNoteOut(answer[0], 420); }, 140);
+      setTimeout(() => { window.playNoteOut(answer[0], 420); }, 140);
       setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, 700);
-      msgEl.textContent = "単音を聴いたら、ドレミのどれか1つを押して当ててね。";
+      msgEl.textContent = (qSource==="song" ? `曲モード：${(SONGS[songKey]||SONGS.twinkle).title}（キー:${ALL_NOTES[songShiftPc]}）\n単音を聴いたら、鍵盤で当ててね。` : "単音を聴いたら、ドレミのどれか1つを押して当ててね。");
     } else if (mode === MODE.chord2){
       const t0 = performance.now() + 170;
       answerTimings = [t0, t0];
       setTimeout(() => {
-        playNoteOut(answer[0], 520);
-        playNoteOut(answer[1], 520);
+        window.playNoteOut(answer[0], 520);
+        window.playNoteOut(answer[1], 520);
       }, 170);
       setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, 820);
       msgEl.textContent = chordLabel() + " / 2音を聴いたら、同じ2音を押して当ててね（順番OK）。";
@@ -1020,7 +1232,7 @@ let soundMode = "synth"; // "sample" | "beep"
       for (let i=0;i<answer.length;i++){
         const start = performance.now() + t;
         answerTimings.push(start);
-        setTimeout(() => { playNoteOut(answer[i], 260); }, t);
+        setTimeout(() => { window.playNoteOut(answer[i], 260); }, t);
         t += tempoMs;
       }
       setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, t + 140);
@@ -1133,7 +1345,7 @@ else if (allOkOrBetter) grade = "OK";
   async function onPressNote(note){
     ensureAudio();
     // feedback sound
-    playNoteOut(note, 160);
+    window.playNoteOut(note, 160);
 
     if (!answer.length){
       msgEl.textContent = "まず「問題出す」を押してね。";
@@ -1248,6 +1460,26 @@ else if (allOkOrBetter) grade = "OK";
     }
     resetAll();
   });
+
+  if (srcSel){
+    srcSel.addEventListener("change", () => {
+      qSource = srcSel.value;
+      qSource = srcSel ? srcSel.value : "random";
+  songKey = songSel ? songSel.value : "twinkle";
+  refreshSongUi();
+      songPos = 0;
+      resetAll();
+    });
+  }
+  if (songSel){
+    songSel.addEventListener("change", () => {
+      songKey = songSel.value;
+      songPos = 0;
+      resetAll();
+    });
+  }
+  refreshSongUi();
+
   octSel.addEventListener("change", () => { octave = Number(octSel.value); resetAll(); });
 
   sharpQuiz.addEventListener("change", () => { includeSharps = !!sharpQuiz.checked; resetAll(); });
@@ -1311,6 +1543,353 @@ soundBtn.addEventListener("click", () => {
   resetAll();
   layoutSharps();
 })();
+
+function pickSongKeyPc(){
+  // key shift disabled (original key)
+  return 0;
+}
+
+// =================== MIDI import (client-side) ===================
+function __readU32(dv, o){ return dv.getUint32(o, false); }
+function __readU16(dv, o){ return dv.getUint16(o, false); }
+function __readStr(u8, o, n){ return new TextDecoder("ascii").decode(u8.slice(o,o+n)); }
+function __readVLQ(u8, o){
+  let v = 0; let i = o;
+  while (i < u8.length){
+    const b = u8[i++];
+    v = (v << 7) | (b & 0x7F);
+    if ((b & 0x80) === 0) break;
+  }
+  return { value:v, next:i };
+}
+
+function __midiToNoteName(midi){
+  const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const pc = ((midi%12)+12)%12;
+  const octave = Math.floor(midi/12)-1; // MIDI: C4=60
+  return { n:names[pc], o:octave };
+}
+
+/**
+ * Minimal SMF parser:
+ * - Reads header/track chunks
+ * - Collects note-on events with absolute tick
+ * - Returns tracks with note-on list
+ */
+function parseMIDI(arrayBuffer){
+  const u8 = new Uint8Array(arrayBuffer);
+  const dv = new DataView(arrayBuffer);
+
+  let off = 0;
+  function expect(tag){
+    const s = __readStr(u8, off, 4);
+    if (s !== tag) throw new Error(`MIDI形式エラー: ${tag} が見つかりません（${s}）`);
+    off += 4;
+  }
+  expect("MThd");
+  const headerLen = __readU32(dv, off); off += 4;
+  const format = __readU16(dv, off); off += 2;
+  const nTracks = __readU16(dv, off); off += 2;
+  const division = __readU16(dv, off); off += 2;
+  // Skip rest of header if any
+  off += Math.max(0, headerLen - 6);
+
+  const ticksPerBeat = (division & 0x8000) ? 480 : division; // ignore SMPTE mode
+  const tracks = [];
+
+  for (let ti=0; ti<nTracks; ti++){
+    expect("MTrk");
+    const trkLen = __readU32(dv, off); off += 4;
+    const trkEnd = off + trkLen;
+
+    let absTick = 0;
+    let runningStatus = null;
+    let noteOns = [];
+    let tempoEvents = [];
+    let name = "";
+
+    while (off < trkEnd){
+      const d = __readVLQ(u8, off); absTick += d.value; off = d.next;
+      let status = u8[off++];
+
+      if (status < 0x80){
+        // running status: status byte is actually data
+        if (runningStatus === null) throw new Error("MIDI running status error");
+        off--; // step back to treat this byte as data
+        status = runningStatus;
+      } else {
+        runningStatus = status;
+      }
+
+      if (status === 0xFF){
+        // Meta
+        const type = u8[off++];
+        const l = __readVLQ(u8, off); off = l.next;
+        const len = l.value;
+        if (type === 0x03){
+          // Track name
+          try { name = new TextDecoder("utf-8").decode(u8.slice(off, off+len)); } catch(e){}
+        } else if (type === 0x51 && len === 3){
+          const mpq = (u8[off]<<16) | (u8[off+1]<<8) | u8[off+2];
+          tempoEvents.push({tick:absTick, mpq});
+        }
+        off += len;
+        continue;
+      }
+      if (status === 0xF0 || status === 0xF7){
+        // SysEx
+        const l = __readVLQ(u8, off); off = l.next + l.value;
+        continue;
+      }
+
+      const hi = status & 0xF0;
+      const ch = status & 0x0F;
+      if (hi === 0x90 || hi === 0x80){
+        const note = u8[off++]; 
+        const vel  = u8[off++];
+        const isOn = (hi === 0x90) && vel > 0;
+        if (isOn){
+          noteOns.push({tick:absTick, note, vel, ch});
+        }
+      } else if (hi === 0xA0 || hi === 0xB0 || hi === 0xE0){
+        off += 2;
+      } else if (hi === 0xC0 || hi === 0xD0){
+        off += 1;
+      } else {
+        // Unknown event, try to skip safely (most are handled above)
+        // Fallback: do nothing
+      }
+    }
+
+    tracks.push({ index:ti, name, noteOns, tempoEvents });
+    off = trkEnd;
+  }
+
+  return { format, ticksPerBeat, tracks };
+}
+
+/**
+ * Build a "song" note list from a chosen track:
+ * - Sort note-ons
+ * - If multiple notes at same tick, pick highest (melody-ish)
+ * - Deduplicate repeated notes very close in time
+ */
+function buildSongFromTrack(parsed, trackIndex){
+  const tr = parsed.tracks.find(t => t.index === trackIndex);
+  if (!tr) throw new Error("トラックが見つかりません");
+
+  const ons = tr.noteOns.slice().sort((a,b)=> a.tick-b.tick || a.note-b.note);
+  const out = [];
+  let i = 0;
+
+  while (i < ons.length){
+    const tick = ons[i].tick;
+    // gather same-tick chord
+    let j = i;
+    let best = ons[i];
+    while (j < ons.length && ons[j].tick === tick){
+      if (ons[j].note > best.note) best = ons[j];
+      j++;
+    }
+    const nn = __midiToNoteName(best.note);
+
+    // Dedup: ignore exact same note if last note within 1/16 beat
+    const last = out[out.length-1];
+    const minGap = Math.max(1, Math.floor(parsed.ticksPerBeat/16));
+    if (!last || last.n !== nn.n || last.o !== nn.o || (tick - last.__tick) >= minGap){
+      out.push({ n: nn.n, o: nn.o, d: 1, __tick: tick });
+    }
+
+    i = j;
+  }
+
+  // Clean internal tick field
+  out.forEach(x => delete x.__tick);
+
+  if (out.length < 2) throw new Error("このトラックからメロディを作れませんでした（ノートが少ない）");
+
+  return out;
+}
+
+// Wire UI
+(() => {
+  const fileEl = document.getElementById("midiFile");
+  const loadBtn = document.getElementById("midiLoadBtn");
+  const trSel = document.getElementById("midiTrackSel");
+  const useBtn = document.getElementById("midiUseTrackBtn");
+  const hint = document.getElementById("midiHint");
+  const previewBtn = document.getElementById("midiPreview8Btn");
+
+  if (!fileEl || !loadBtn || !trSel || !useBtn) return;
+
+  let __parsed = null;
+
+  function __registerTrackAsSong(idx){
+    const notes = buildSongFromTrack(__parsed, idx);
+    const id = "userMidi";
+    const title = "ユーザーMIDI（読み込み）";
+    window.SONGS = window.SONGS || {};
+    window.SONGS[id] = { title, bpm: 100, notes };
+
+    // Ensure song select includes it + select it
+    const songSel = document.getElementById("songSel");
+    if (songSel){
+      let opt = songSel.querySelector(`option[value="${id}"]`);
+      if (!opt){
+        opt = document.createElement("option");
+        opt.value = id;
+        opt.textContent = title;
+        songSel.appendChild(opt);
+      }
+      songSel.value = id;
+      try{ songSel.dispatchEvent(new Event('change',{bubbles:true})); }catch(e){}
+    }
+
+    // Keep "song" source (UI may not have srcSel in this trimmed version)
+    const srcSel = document.getElementById("srcSel");
+    if (srcSel) srcSel.value = "song";
+
+    try{ if (typeof refreshSongUi === "function") refreshSongUi(); }catch(_e){}
+
+    return { id, title, notes };
+  }
+
+  // ファイルを選んだら自動で読み込み（ボタン押し忘れ防止）
+  fileEl.addEventListener("change", () => {
+    // 小さな遅延でファイル選択完了後に実行
+    setTimeout(()=> loadBtn.click(), 50);
+  });
+
+  loadBtn.addEventListener("click", async () => {
+    try{
+      const f = fileEl.files && fileEl.files[0];
+      if (!f){ alert("MIDIファイルを選んでください"); return; }
+
+      const ab = await f.arrayBuffer();
+      __parsed = parseMIDI(ab);
+
+      // populate track list
+      trSel.innerHTML = "";
+      const tracks = __parsed.tracks;
+      if (!tracks || tracks.length === 0){ throw new Error("トラックが0件です（MIDIが空か、解析できませんでした）"); }
+
+      // Choose default: most note-ons
+      let bestIdx = 0;
+      let bestCount = -1;
+      tracks.forEach((t, k)=>{
+        const labelName = t.name ? `: ${t.name}` : "";
+        const opt = document.createElement("option");
+        opt.value = String(t.index);
+        opt.textContent = `Track ${t.index}（notes ${t.noteOns.length}）${labelName}`;
+        trSel.appendChild(opt);
+        if (t.noteOns.length > bestCount){ bestCount = t.noteOns.length; bestIdx = t.index; }
+      });
+      trSel.value = String(bestIdx);
+      trSel.disabled = false;
+      trSel.size = Math.min(12, Math.max(4, tracks.length));
+      trSel.style.display = "";
+
+      useBtn.disabled = false;
+      hint.textContent = `✅ 読み込み成功: format=${__parsed.format}, tracks=${tracks.length}（おすすめ: Track ${bestIdx}）`;
+      // Auto-register the recommended track as the current song (no extra click needed)
+      try{
+        const r = __registerTrackAsSong(bestIdx);
+        hint.textContent += ` / ✅ 現在の曲: ${r.title}（Track ${bestIdx}）`;
+      }catch(e){
+        console.warn(e);
+        hint.textContent += " / ⚠️ 自動登録できませんでした（トラック選択後に「このトラックを曲として使う」を押してください）";
+      }
+
+    }catch(e){
+      console.error(e);
+      alert("読み込み失敗: " + (e && e.message ? e.message : String(e)));
+    }
+  });
+
+  
+  function __getTempoMs(){
+    const el = document.getElementById("tempoRange");
+    const v = el ? parseInt(el.value,10) : NaN;
+    return Number.isFinite(v) ? v : tempoMs;
+  }
+  function __sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+  async function __preview8sFromTrack(){
+    try{
+      if (!__parsed){ alert("先にMIDIを読み込んでください"); return; }
+      const idx = parseInt(trSel.value, 10);
+      if (!Number.isFinite(idx)){ alert("トラックを選んでください"); return; }
+      const notes = buildSongFromTrack(__parsed, idx); // [{n,o,d}]
+      const t0 = performance.now();
+      const tempo = __getTempoMs();
+      for (let i=0;i<notes.length;i++){
+        const nn = notes[i];
+        const dur = Math.max(90, Math.round(tempo * (nn.d || 1)));
+        // Play note with its own octave (no global octave mutation)
+        const noteObj = (nn && typeof nn === "object") ? nn : { n: nn, o: parseInt(octSel.value || "4", 10) };
+        await window.playNoteOut(noteObj, dur);
+        await __sleep(dur);
+        if (performance.now() - t0 >= 8000) break;
+      }
+    }catch(e){
+      console.error(e);
+      alert("プレビュー失敗: " + (e && e.message ? e.message : String(e)));
+    }
+  }
+
+  if (previewBtn){
+    previewBtn.addEventListener("click", () => { __preview8sFromTrack(); });
+  }
+
+useBtn.addEventListener("click", () => {
+    try{
+      if (!__parsed){ alert("先にMIDIを読み込んでください"); return; }
+      const idx = parseInt(trSel.value, 10);
+      if (!Number.isFinite(idx)){ alert("トラックを選んでください"); return; }
+      __registerTrackAsSong(idx);
+      alert("✅ MIDIトラックを曲として登録しました！「問題出す」で出題できます。");
+    }catch(e){
+      console.error(e);
+      alert("登録失敗: " + (e && e.message ? e.message : String(e)));
+    }
+  });
+  // expose for external handlers (preview etc.)
+  try{ window.playNoteOut = playNoteOut; }catch(e){}
+
+})();
+// ================= end MIDI import =================
+
+
+  // --- Audio unlock helpers (fix "no sound" on some browsers) ---
+  function __unlockPing(){
+    const ctx = (window.ensureAudio ? window.ensureAudio() : null);
+    if (!ctx) return;
+    try{
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(880, ctx.currentTime);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+      o.connect(g).connect(ctx.destination);
+      o.start();
+      o.stop(ctx.currentTime + 0.13);
+    }catch(e){}
+  }
+
+  // Button unlock
+  document.getElementById("unlockBtn")?.addEventListener("click", () => {
+    __unlockPing();
+    try{ setState("AUDIO OK","good"); }catch(e){}
+});
+
+  // First user gesture unlock (one-time)
+  window.addEventListener("pointerdown", () => {
+    __unlockPing();
+  }, { once:true, passive:true });
+  // --- end unlock helpers ---
+
 </script>
 </body>
 </html>
