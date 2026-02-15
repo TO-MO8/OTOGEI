@@ -246,6 +246,7 @@ button, select, input[type="file"]{
           <div class="msg" id="msg">
             「問題出す」を押してね。生音にしたい場合は <code>assets/piano/C4.mp3</code> みたいに音源を置いてから開く。
           </div>
+          <div id="audioStatus" style="display:none; font-size:12px; opacity:.85; margin-top:8px;"></div>
         </div>
 
         <div class="panel">
@@ -677,8 +678,9 @@ const FORCE_SONG_KEY_PC = 0;
   // tiny beep fallback
   function beep(freq, dur=0.18, gain=0.045){
     if (!masterOn) return;
+    // In sample mode, never emit oscillator beeps (no automatic fallback)
+    if (soundMode === "sample") return;
     ensureAudio();
-    if (soundMode === "sample") ensurePreload();
     if (!audioCtx) return;
     const t0 = audioCtx.currentTime;
     const o = audioCtx.createOscillator();
@@ -907,33 +909,111 @@ const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boo
 const EXT_TRY = ["mp3","wav","ogg"];
 let preloadPromise = null;
 
+// ---- Sample load UI (minimal, does not change left panel layout) ----
+function setAudioStatus(msg, tone="info"){
+  const el = document.getElementById("audioStatus");
+  if (!el) return;
+  if (!msg){
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.style.display = "block";
+  el.textContent = msg;
+}
+
+function setSampleBusy(busy){
+  const ids = ["newBtn","playBtn","resumeBtn","pauseBtn","stopBtn2"];
+  ids.forEach(id=>{
+    const el = document.getElementById(id);
+    if (el) el.disabled = !!busy;
+  });
+}
+
+async function ensureSampleReady(){
+  // Only for sample mode. Never falls back to osc/beep automatically.
+  if (soundMode !== "sample") return true;
+  if (!masterOn) return true; // muted by user
+  try{ ensureAudio(); }catch(e){}
+  if (!audioCtx){
+    setAudioStatus("音を有効化してください（🔊 ON）");
+    return false;
+  }
+  // Preload current octave (12 notes) so first note never becomes "not ready"
+  if (!preloadPromise){
+    setSampleBusy(true);
+    setAudioStatus("サンプル読み込み中…");
+    preloadPromise = preloadAllForOct(octave)
+      .catch((e)=>{ console.error("[sample preload] ERROR", e); })
+      .finally(()=>{ setSampleBusy(false); });
+  }
+  await preloadPromise;
+  // If nothing loaded, warn but stay silent
+  // (We cannot easily count here; loadSample logs failures)
+  setAudioStatus(""); 
+  return true;
+}
+
 async function fetchAndDecode(url){
-  const res = await fetch(url, { cache: "no-store" }).catch(() => null);
-  if (!res || !res.ok) return null;
-  const arr = await res.arrayBuffer();
+  let res = null;
+  try{
+    res = await fetch(url, { cache: "force-cache" });
+  }catch(err){
+    console.error("[sample fetch] ERROR", { url, err });
+    return null;
+  }
+  if (!res || !res.ok){
+    console.error("[sample fetch] FAIL", { url, status: res ? res.status : "no-response", statusText: res ? res.statusText : "" });
+    return null;
+  }
+  let arr;
+  try{
+    arr = await res.arrayBuffer();
+  }catch(err){
+    console.error("[sample fetch] arrayBuffer ERROR", { url, err });
+    return null;
+  }
   ensureAudio();
-  if (!audioCtx) return null;
-  // decodeAudioData is async and can be slow once; we keep buffers cached
-  return await audioCtx.decodeAudioData(arr).catch(() => null);
+  if (!audioCtx){
+    console.error("[sample decode] no audioCtx", { url });
+    return null;
+  }
+  try{
+    // decodeAudioData is async and can be slow once; we keep buffers cached
+    return await audioCtx.decodeAudioData(arr);
+  }catch(err){
+    console.error("[sample decode] ERROR", { url, err });
+    return null;
+  }
 }
 
 async function loadSample(note, octave){
   const key = `${note}${octave}`;
   if (sampleBufCache.has(key)) return sampleBufCache.get(key);
 
-  const altKey = key.replace("#","s"); // C#4 -> Cs4
+  // Normalize naming to your repo assets:
+  // - Sharps prefer "Cs4" style (s), but we also try "C#4" if present.
+  // - Flats map to enharmonic sharp name (Db -> Cs, etc).
+  const flatToSharp = { "Db":"C#", "Eb":"D#", "Gb":"F#", "Ab":"G#", "Bb":"A#" };
+  const n2 = flatToSharp[note] || note;
+
+  const stemSharp = `${n2}${octave}`;                 // e.g. C#4
+  const stemS     = stemSharp.replace("#","s");       // e.g. Cs4
+  const stems = Array.from(new Set([stemS, stemSharp, key.replace("#","s"), key]));
+
   for (const ext of EXT_TRY){
-    // try exact filename first, then Cs4-style
-    const url1 = `assets/piano/${encodeURIComponent(key)}.${ext}`;     // C%234.mp3 for C#4.mp3
-    const url2 = `assets/piano/${encodeURIComponent(altKey)}.${ext}`; // Cs4.mp3
-    let buf = await fetchAndDecode(url1);
-    if (!buf) buf = await fetchAndDecode(url2);
-    if (buf){
-      const entry = { buf, ok:true };
-      sampleBufCache.set(key, entry);
-      return entry;
+    for (const stem of stems){
+      const url = `./assets/piano/${encodeURIComponent(stem)}.${ext}`;
+      const buf = await fetchAndDecode(url);
+      if (buf){
+        const entry = { buf, ok:true, url };
+        sampleBufCache.set(key, entry);
+        return entry;
+      }
     }
   }
+
+  console.warn("[sample] missing", { note, octave, tried: stems.map(s=>`./assets/piano/${s}.[${EXT_TRY.join("|")}]`) });
   const entry = { buf:null, ok:false };
   sampleBufCache.set(key, entry);
   return entry;
@@ -952,10 +1032,8 @@ async function preloadAllForOct(oct){
 }
 
 function ensurePreload(){
-  if (!preloadPromise){
-    preloadPromise = preloadAllForOct(octave).catch(() => {});
-  }
-  return preloadPromise;
+  // Backward compatible wrapper
+  return ensureSampleReady();
 }
 
 function playBuffer(buf, gain=1.0, durMs=null){
@@ -992,7 +1070,8 @@ function playBuffer(buf, gain=1.0, durMs=null){
 
 
 async function playSample(note, octave, durMs){
-  // Fully await loading the sample so the *first* note is also a real sample (no synthy fallback).
+  // Fully await loading the sample so the *first* note is also a real sample.
+  await ensureSampleReady();
   const key = `${note}${octave}`;
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
@@ -1033,7 +1112,12 @@ let quizNowMeasure = null; // 0-based current measure index during question/nav
 
   
   let okMs = 1200;
-let soundMode = "synth"; // "sample" | "beep"
+let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
+
+  function syncSoundModeFromUI(){
+    try{ soundMode = soundSel && soundSel.value ? soundSel.value : soundMode; }catch(e){}
+  }
+
 
   let answer = [];
   let answerPlay = [];
@@ -1444,15 +1528,25 @@ async function playNoteOut(note, durMs){
       return true;
     }
 
-    // Samples (piano) + fallback beeps
+    // Samples (piano). In sample mode, NEVER fall back to oscillator/beep automatically.
     if (soundMode === "sample"){
+      await ensureSampleReady();
       const ok = await playSample(noteName, useOct, durMs);
       if (ok) return true;
-      // fallback beep if missing sample
+      // Missing sample -> silent + status (no fallback)
+      setAudioStatus(`サンプルが見つかりません: ${noteName}${useOct}（無音）`);
+      return true;
     }
-    const m = midiFromNote(noteName, useOct);
-    beep(freqFromMidi(m), Math.max(0.08, durMs/1000), 0.05);
-    return false;
+
+    // Explicit beep mode only
+    if (soundMode === "beep"){
+      const m = midiFromNote(noteName, useOct);
+      beep(freqFromMidi(m), Math.max(0.08, durMs/1000), 0.05);
+      return true;
+    }
+
+    // If we reach here (e.g., gmpiano failed), stay silent rather than auto-beep
+    return true;
   }
 
 // expose for preview/handlers outside IIFE
@@ -1488,8 +1582,8 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
     setState("LISTEN", "warn");
     ensureAudio();
 
-    // count-in
-    beep(1000, 0.06, 0.05);
+    // count-in (do not use oscillator in sample mode)
+    if (soundMode !== "sample") beep(1000, 0.06, 0.05);
 
     // clear any previous scheduled playback
     try{ if (ctl.timer) clearTimeout(ctl.timer); }catch(e){}
@@ -1680,22 +1774,22 @@ else if (allOkOrBetter) grade = "OK";
       score += 200 + streak*8;
       streak += 1;
       setState("PERFECT!", "good");
-      beep(1200, 0.06, 0.05);
+      if (soundMode !== "sample") beep(1200, 0.06, 0.05);
     } else if (grade === "GOOD"){
       score += 120 + streak*5;
       streak += 1;
       setState("GOOD!", "good");
-      beep(900, 0.06, 0.045);
+      if (soundMode !== "sample") beep(900, 0.06, 0.045);
     } else if (grade === "OK"){
   score += 70 + streak*3;
   streak += 1;
   setState("OK", "warn");
-  beep(650, 0.06, 0.04);
+  if (soundMode !== "sample") beep(650, 0.06, 0.04);
 } else {
       score = Math.max(0, score - 50);
       streak = 0;
       setState("MISS", "bad");
-      beep(180, 0.10, 0.05);
+      if (soundMode !== "sample") beep(180, 0.10, 0.05);
     }
     updateHeader();
     updateQuizBarInfo();
@@ -1970,15 +2064,23 @@ noLimit.addEventListener("change", () => {
   }
 });
 
-soundBtn.addEventListener("click", () => {
+soundBtn.addEventListener("click", async () => {
     masterOn = !masterOn;
     soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
-    if (masterOn) ensureAudio();
+    if (masterOn){
+      ensureAudio();
+      syncSoundModeFromUI();
+      if (soundMode === "sample") await ensureSampleReady();
+    } else {
+      setAudioStatus("");
+      setSampleBusy(false);
+    }
   });
 
   soundSel.addEventListener("change", async () => {
-    soundMode = soundSel.value;
-    if (soundMode === "sample") ensurePreload();
+    syncSoundModeFromUI();
+    if (soundMode === "sample") await ensureSampleReady();
+    else { setAudioStatus(""); }
     if (midiWrap) midiWrap.style.display = "none";
     if (soundMode === "midiout"){
       await ensureMIDI().catch(()=>{});
@@ -1993,6 +2095,8 @@ soundBtn.addEventListener("click", () => {
   perfV.textContent = perfectMs;
   goodV.textContent = goodMs;
 
+  syncSoundModeFromUI();
+  // Do not preload until user gesture (🔊 ON or playback), but keep state synced.
   updateHeader();
   resetAll();
   layoutSharps();
