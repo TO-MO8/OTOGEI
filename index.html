@@ -29,6 +29,29 @@
     h1{margin:0; font-size:18px; letter-spacing:.3px}
     .sub{margin-top:6px; color:var(--muted); font-size:12px; line-height:1.4}
     .controls{display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end;}
+    .keyHintTop{
+      margin-top:8px;
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.25);
+      font-size:18px;
+      font-weight:950;
+      letter-spacing:.02em;
+      white-space:nowrap;
+    }
+    .keyHintTop b{font-weight:1000}
+    .keyBox{display:flex; flex-direction:column; gap:2px; min-width: 220px;}
+    .keyRow{line-height:1.2}
+    .miniToggle{display:inline-flex; align-items:center; gap:8px; padding:8px 10px;
+      border-radius:12px; border:1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.08); cursor:pointer; user-select:none;
+      font-size:14px; font-weight:800;
+    }
+    .miniToggle input{transform:scale(1.2); accent-color: var(--accent);}
+
+
     
 
     /* --- Layout helpers for settings rows --- */
@@ -186,8 +209,29 @@ button, select, input[type="file"]{
           <button id="unlockBtn" class="ghost">🔊 音を有効化</button>
           <button class="primary" id="newBtn">問題出す</button>
           <button id="playBtn">もう一回聴く</button>
+          <div class="row" style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:6px;">
+            <button id="pauseBtn" class="ghost">⏸ 一時停止</button>
+            <button id="resumeBtn" class="ghost">▶ 再開</button>
+            <button id="stopBtn2" class="ghost">⏹ 停止</button>
+          </div>
+
+          <div class="row" style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center;">
+            <button id="barHomeBtn" class="ghost">⏮ 最初</button>
+            <button id="barPrevBtn" class="ghost">◀ 小節</button>
+            <button id="barNextBtn" class="ghost">小節 ▶</button>
+          </div>
           <button class="danger" id="resetBtn">リセット</button>
                   </div>
+        <div class="keyHintTop" id="keyHintTop">
+  <div class="keyBox">
+    <div class="keyRow">🎼 オリジナル：<b id="keyOrigVal">（未解析）</b></div>
+    <div class="keyRow">▶ 今の演奏：<b id="keyPlayVal">（未解析）</b></div>
+  </div>
+  <label class="miniToggle" title="曲のキーをCメジャー（マイナーならAマイナー）に移調して再生します。出題や一曲再生にだけ反映され、表示オクターブ(C3/C4/C5)には影響しません。">
+    <input type="checkbox" id="toCSwitch">
+    <span>Cコード化</span>
+  </label>
+</div>
       </div>
 
       <div class="main">
@@ -286,7 +330,7 @@ button, select, input[type="file"]{
                 <label class="label">MIDI読み込み：</label>
                 <input id="midiFile" type="file" accept=".mid,.midi" />
                 <button id="midiLoadBtn" class="btn">読み込む</button>
-                <button id="midiPreview8Btn" class="btn" title="選択中トラックを8秒プレビュー">8秒プレビュー</button>
+<button id="midiPlayAllBtn" class="btn primary" title="選択中トラックを最初から最後まで再生">一曲再生</button>
               </div>
               <div class="row" style="margin-top:6px">
                 <label class="label">MIDIトラック：</label>
@@ -300,6 +344,8 @@ button, select, input[type="file"]{
 </div>
 
               
+              <div class="hint" id="keyHint" style="margin-top:6px; display:none">🎼 この曲のキー：<b id="keyHintVal">（未解析）</b></div>
+
 </label>
 <label>
               <span>オクターブ（基準）</span>
@@ -310,18 +356,18 @@ button, select, input[type="file"]{
               </select>
             </label>
 
-            <label class="toggleRow">
+            <label class="toggleRow" style="display:none">
               <span>♯を出題に含める</span>
               <span style="display:flex; gap:10px; align-items:center;">
                 <input id="sharpQuiz" type="checkbox" />
                 <span>ON</span>
               </span>
             </label>
-
             <div class="rangeWrap">
-              <label><span>メロディ長（最大20）</span><span id="lenV">3</span></label>
-              <input id="lenRange" type="range" min="2" max="20" value="3" />
+              <label><span>出題小節数（最大4）</span><span id="barV">1</span></label>
+              <input id="barRange" type="range" min="1" max="4" value="1" />
             </div>
+
 
             <div class="rangeWrap">
               <label><span>テンポ（メロディ再生間隔ms）</span><span id="tempoV">430</span></label>
@@ -419,6 +465,37 @@ const FORCE_SONG_KEY_PC = 0;
   let audioCtx = null;
   let masterOn = true;
 
+  // ---- Active audio nodes (for stopping overlapping preview/playback) ----
+  const __activeAudio = new Set();
+  function __trackNode(node){
+    if (!node) return node;
+    __activeAudio.add(node);
+    try{
+      node.addEventListener && node.addEventListener("ended", ()=>{ __activeAudio.delete(node); });
+    }catch(e){}
+    try{
+      // WebAudio nodes often use onended
+      if ("onended" in node){
+        const prev = node.onended;
+        node.onended = (ev) => {
+          try{ __activeAudio.delete(node); }catch(e){}
+          if (typeof prev === "function") { try{ prev(ev); }catch(e){} }
+        };
+      }
+    }catch(e){}
+    return node;
+  }
+  function stopAllAudio(){
+    try{
+      __activeAudio.forEach(n=>{
+        try{ if (typeof n.stop === "function") n.stop(0); }catch(e){}
+        try{ if (typeof n.disconnect === "function") n.disconnect(); }catch(e){}
+      });
+    }catch(e){}
+    __activeAudio.clear();
+  }
+  try{ window.__stopAllAudio = stopAllAudio; }catch(e){}
+
   const NOTE_NAMES = ["C","D","E","F","G","A","B"];
   const SHARP_KEYS = ["C#","D#","F#","G#","A#"];
   const ALL_NOTES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
@@ -448,6 +525,33 @@ const FORCE_SONG_KEY_PC = 0;
     const pc = __PC[n];
     if (pc == null) return n;
     return ALL_NOTES[(pc + shiftPc + 120) % 12];
+  }
+
+  // expose for helpers that call window.transposeNoteName
+  try{ window.transposeNoteName = transposeNoteName; }catch(e){}
+
+
+  window.__songItemToPlayNote = function(item, shiftPc){
+    // item: {n:"C", o:4, ...} or "C"
+    let n = null;
+    let o = null;
+    if (item && typeof item === "object"){
+      n = item.n ?? item.note ?? item.name;
+      o = item.o ?? item.octave ?? item.oct;
+    } else if (typeof item === "string"){
+      n = item;
+    }
+    if (!n) n = "C";
+    if (o == null) o = 4;
+    // Apply pitch-class shift in semitones, preserving octave boundaries.
+    try{
+      const baseMidi = midiFromNote(String(n).replace(/s/g,'#'), parseInt(o,10));
+      const shifted = baseMidi + (shiftPc||0);
+      const p = normalizeNoteInput(shifted, parseInt(o,10));
+      return { n: p.name, o: p.octave };
+    }catch(e){
+      return { n: transposeNoteName(String(n), shiftPc||0), o: parseInt(o,10) };
+    }
   }
 
   // -------------------------
@@ -554,7 +658,21 @@ const FORCE_SONG_KEY_PC = 0;
     return 12 * (octave + 1) + semi;
   }
   function freqFromMidi(m){ return 440 * Math.pow(2, (m-69)/12); }
-  function noteLabel(n){ return `${n}（${JP[n]||n}）`; }
+  function noteLabel(n){
+    // n can be "C" / "C#" / "Cs" or "C4" / "C#4" etc.
+    const s = String(n ?? "");
+    const m = s.match(/^([A-G](?:#|b|s)?)(-?\d+)?$/);
+    const name = m ? m[1] : s;
+    const oct = (m && m[2] != null) ? m[2] : "";
+    const jp = JP[name] || name;
+    return `${name}${oct}（${jp}）`;
+  }
+
+  function noteKey(name, octave){
+    const n = String(name||"C").replace(/s/g,'#');
+    const o = (octave==null?4:parseInt(octave,10));
+    return `${n}${o}`;
+  }
 
   // tiny beep fallback
   function beep(freq, dur=0.18, gain=0.045){
@@ -565,6 +683,7 @@ const FORCE_SONG_KEY_PC = 0;
     const t0 = audioCtx.currentTime;
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
+    __trackNode(o);
     o.type = "sine";
     o.frequency.setValueAtTime(freq, t0);
     g.gain.setValueAtTime(0.0001, t0);
@@ -644,11 +763,20 @@ const FORCE_SONG_KEY_PC = 0;
     const semis = midi - baseMidi;
     const rate = Math.pow(2, semis/12);
 
+    // If the GM sample is not decoded yet, don't pretend we played it.
+    // Let the caller fall back to synth/beep for guaranteed sound.
+    const readyBuf = __gmBuffers[pick.name];
+    if (!readyBuf){
+      loadGmSampleByKey(pick.name).catch(()=>{});
+      return false;
+    }
+
     const start = audioCtx.currentTime;
     const srcNode = audioCtx.createBufferSource();
     const gain = audioCtx.createGain();
-
-    // Envelope (piano-ish): quick attack, decay, release
+    __trackNode(srcNode);
+    __trackNode(gain);
+// Envelope (piano-ish): quick attack, decay, release
     const peak = 0.9 * vel;
     gain.gain.setValueAtTime(0.0001, start);
     gain.gain.exponentialRampToValueAtTime(peak, start + 0.008);
@@ -663,17 +791,14 @@ const FORCE_SONG_KEY_PC = 0;
     lp.frequency.setValueAtTime(cutoff, start);
     lp.Q.setValueAtTime(0.7, start);
 
+    srcNode.buffer = readyBuf;
     srcNode.playbackRate.setValueAtTime(rate, start);
     srcNode.connect(lp).connect(gain).connect(audioCtx.destination);
+    srcNode.start(start);
 
-    loadGmSampleByKey(pick.name).then((buf)=> {
-      if (!buf) return;
-      srcNode.buffer = buf;
-      srcNode.start(start);
-      const intended = Math.max(1.05, durMs/1000 + 0.65);
-      const bufDur = buf.duration / Math.max(0.1, rate);
-      srcNode.stop(start + Math.min(bufDur, intended));
-    }).catch(()=>{});
+    const intended = Math.max(1.05, durMs/1000 + 0.65);
+    const bufDur = readyBuf.duration / Math.max(0.1, rate);
+    srcNode.stop(start + Math.min(bufDur, intended));
     return true;
   }
   // --- end GM-ish piano ---
@@ -696,6 +821,7 @@ function synthPiano(freq, durMs=420, vel=0.9){
     }
     const noise = audioCtx.createBufferSource();
     noise.buffer = noiseBuf;
+    __trackNode(noise);
 
     const noiseHP = audioCtx.createBiquadFilter();
     noiseHP.type = "highpass";
@@ -710,6 +836,7 @@ function synthPiano(freq, durMs=420, vel=0.9){
     const o1 = audioCtx.createOscillator();
     const o2 = audioCtx.createOscillator();
     const o3 = audioCtx.createOscillator();
+    __trackNode(o1); __trackNode(o2); __trackNode(o3);
     o1.type = "triangle";
     o2.type = "sine";
     o3.type = "sine";
@@ -831,30 +958,50 @@ function ensurePreload(){
   return preloadPromise;
 }
 
-function playBuffer(buf, gain=1.0){
+function playBuffer(buf, gain=1.0, durMs=null){
   if (!masterOn) return;
   ensureAudio();
   if (!audioCtx || !buf) return;
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
+  __trackNode(src);
+
+  // If the note should last longer than the sample, loop it (simple sustain).
+  // This isn't a perfect piano sustain, but it prevents "cut short" feel.
+  if (Number.isFinite(durMs) && durMs > (buf.duration * 1000)){
+    src.loop = true;
+    src.loopStart = 0.02;
+    src.loopEnd = Math.max(src.loopStart + 0.05, buf.duration);
+  }
+
   const g = audioCtx.createGain();
-  g.gain.value = gain;
+  const now = audioCtx.currentTime;
+  g.gain.setValueAtTime(gain, now);
+
   src.connect(g).connect(audioCtx.destination);
-  // start immediately for low latency
   src.start();
+
+  if (Number.isFinite(durMs)){
+    const endAt = now + Math.max(0.02, durMs/1000);
+    // tiny release to avoid clicks
+    g.gain.setValueAtTime(gain, Math.max(now, endAt - 0.03));
+    g.gain.exponentialRampToValueAtTime(0.0001, endAt);
+    try{ src.stop(endAt + 0.005); }catch(e){}
+  }
 }
 
-async function playSample(note, octave){
+
+async function playSample(note, octave, durMs){
   // If already cached, play immediately (no await on decode/fetch)
   const key = `${note}${octave}`;
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
-    playBuffer(cached.buf, 1.0);
+    playBuffer(cached.buf, 1.0, durMs);
     return true;
   }
   // Otherwise, start loading in background and return false now (fallback beep this time)
   loadSample(note, octave).then(entry => {
-    if (entry.ok && entry.buf) playBuffer(entry.buf, 1.0);
+    if (entry.ok && entry.buf) playBuffer(entry.buf, 1.0, durMs);
   }).catch(() => {});
   return false;
 }
@@ -867,11 +1014,16 @@ async function playSample(note, octave){
   let qSource = "song";
   let songKey = "twinkle";
   let songPos = 0;
+  let songMeasureStarts = null; // indices in SONGS[songKey].notes
+  let songMeasureNums = null;   // per-note measure number
   let songShiftPc = 0;
   let songKeyMode = "original";
   let octave = 4;
   let includeSharps = false;
   let melodyLen = 3;
+  let barsLen = 1;let quizTotalBars = null; // actual bars used in current question
+let quizNowMeasure = null; // 0-based current measure index during question/nav
+
   let tempoMs = 430;
   let perfectMs = 80;
   let goodMs = 160;
@@ -881,6 +1033,8 @@ async function playSample(note, octave){
 let soundMode = "synth"; // "sample" | "beep"
 
   let answer = [];
+  let answerPlay = [];
+
   let answerDurations = null;
   let answerTimings = [];
   let playing = false;
@@ -907,7 +1061,13 @@ let soundMode = "synth"; // "sample" | "beep"
 
   const newBtn = document.getElementById("newBtn");
   const playBtn = document.getElementById("playBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const resumeBtn = document.getElementById("resumeBtn");
+  const stopBtn2 = document.getElementById("stopBtn2");
   const resetBtn = document.getElementById("resetBtn");
+  const barHomeBtn = document.getElementById("barHomeBtn");
+  const barPrevBtn = document.getElementById("barPrevBtn");
+  const barNextBtn = document.getElementById("barNextBtn");
 
   const modeSel = document.getElementById("modeSel");
 
@@ -926,13 +1086,20 @@ let soundMode = "synth"; // "sample" | "beep"
 
   const octSel = document.getElementById("octSel");
   const sharpQuiz = document.getElementById("sharpQuiz");
-  const lenRange = document.getElementById("lenRange");
+  const barRange = document.getElementById("barRange");
+  const barV = document.getElementById("barV");
+  const quizBarsEl = document.getElementById("quizBars");
+  const quizNowBarEl = document.getElementById("quizNowBar");
+
+  // init bar length UI
+  if (barRange) barRange.value = String(barsLen);
+  if (barV) barV.textContent = String(barsLen);
+
   const tempoRange = document.getElementById("tempoRange");
   const perfRange = document.getElementById("perfRange");
   const goodRange = document.getElementById("goodRange");
   const okRange = document.getElementById("okRange");
   const noLimit = document.getElementById("noLimit");
-  const lenV = document.getElementById("lenV");
   const tempoV = document.getElementById("tempoV");
   const perfV = document.getElementById("perfV");
   const goodV = document.getElementById("goodV");
@@ -991,11 +1158,18 @@ let soundMode = "synth"; // "sample" | "beep"
   }
   function updateHeader(){
     modeV.textContent = (mode === MODE.single) ? "単音当て"
-      : (mode === MODE.melody) ? `メロディ当て（${melodyLen}音）`
+      : (mode === MODE.melody) ? `メロディ当て（${barsLen}小節）`
       : "2音コード当て（キー変化）";
     scoreV.textContent = score;
     streakV.textContent = streak;
   }
+
+  function updateQuizBarInfo(){
+    const total = (quizTotalBars != null) ? quizTotalBars : barsLen;
+    if(quizBarsEl) quizBarsEl.textContent = String(total);
+    if(quizNowBarEl) quizNowBarEl.textContent = (quizNowMeasure != null) ? String(quizNowMeasure + 1) : "-";
+  }
+
   function resetRoundUI(){
     input = [];
     inputTimings = [];
@@ -1113,12 +1287,19 @@ let soundMode = "synth"; // "sample" | "beep"
 
   function buildAnswer(){
     answerDurations = null;
+    answerPlay = [];
     if (mode === MODE.chord2){
-      answer = generateChord2Answer();
+      const oSnap = (typeof octave === "number") ? octave : 4;
+      const notes = generateChord2Answer();
+      // Expect/answer includes octave; playback uses fixed snapshot so it won't change after switching octave buttons.
+      answer = notes.map(n => noteKey(n, oSnap));
+      answerPlay = notes.map(n => ({ n: String(n).replace(/s/g,'#'), o: oSnap }));
       return;
     }
 
     if (qSource === "song"){
+      const __quizShift = (typeof __computeSongShiftPc === 'function') ? __computeSongShiftPc() : songShiftPc;
+
       const s = SONGS[songKey] || SONGS.twinkle;
       const base = s.notes;
       if (!base || !base.length){
@@ -1127,31 +1308,84 @@ let soundMode = "synth"; // "sample" | "beep"
       }
 
       if (mode === MODE.single){
-        const n = base[songPos % base.length];
+        const item = base[songPos % base.length];
         songPos = (songPos + 1) % base.length;
-        answer = [transposeNoteName(n, songShiftPc)];
+        const n0 = (item && typeof item === "object" && item.n) ? item.n : item;
+        answerPlay = [window.__songItemToPlayNote(item, __quizShift)];
+        // Expect includes original MIDI octave (and is not affected by octave buttons)
+        answer = [noteKey(answerPlay[0].n, answerPlay[0].o)];
       } else {
-        const seq = [];
+        const playSeq = [];
         const durs = [];
-        const __songLen = Math.max(melodyLen, 16);
-        for (let i=0;i<__songLen;i++){
-          const item = base[(songPos + i) % base.length];
-          if (item && typeof item === "object" && item.n){
-            seq.push(transposeNoteName(item.n, songShiftPc));
-            if (Number.isFinite(item.__dtMs)) durs.push(item.__dtMs);
-          } else {
-            seq.push(transposeNoteName(item, songShiftPc));
-          }
+
+        // Prefer bar-based questions (1-4 measures) when available.
+        const mmStarts = s.measureStarts || null;
+        const mmNums = s.measureNums || null;
+
+        let startIdx = Math.max(0, Math.min(songPos|0, base.length-1));
+        // If we have measure mapping, snap to the start of the current measure.
+        if (mmStarts && mmNums && mmNums.length === base.length){
+          const curM = mmNums[startIdx] || 0;
+          const snapIdx = mmStarts[curM];
+          if (Number.isFinite(snapIdx)) startIdx = snapIdx;
         }
-        songPos = (songPos + __songLen) % base.length;
-        answer = seq;
-        answerDurations = (durs.length === seq.length) ? durs : null;
+
+        if (mmStarts && mmNums && mmNums.length === base.length){
+          const startM = mmNums[startIdx] || 0;
+          const wantBars = Math.max(1, Math.min(4, Math.floor(barsLen||1)));
+          const endM = startM + wantBars - 1;
+
+          for (let j=startIdx; j<base.length; j++){
+            const mNum = mmNums[j];
+            if (mNum == null) break;
+            if (mNum > endM) break;
+            const item = base[j];
+            const p = window.__songItemToPlayNote(item, __quizShift);
+            playSeq.push(p);
+            if (item && Number.isFinite(item.__dtMs)) durs.push(item.__dtMs);
+          }
+
+          // advance to next measure start (or end)
+          const nextM = endM + 1;
+          if (mmStarts[nextM] != null){
+            songPos = mmStarts[nextM];
+          } else {
+            // if we're near the end, loop to start
+            songPos = 0;
+          }
+        } else {
+          // Fallback: note-count based (old behavior)
+          const __songLen = Math.max(1, Math.floor(melodyLen||1));
+          for (let i=0;i<__songLen;i++){
+            const item = base[(startIdx + i) % base.length];
+            const p = window.__songItemToPlayNote(item, __quizShift);
+            playSeq.push(p);
+            if (item && Number.isFinite(item.__dtMs)) durs.push(item.__dtMs);
+          }
+          songPos = (startIdx + __songLen) % base.length;
+        }
+
+        if (!playSeq.length){
+          // safety fallback
+          const item = base[startIdx];
+          playSeq.push(window.__songItemToPlayNote(item, __quizShift));
+          if (item && Number.isFinite(item.__dtMs)) durs.push(item.__dtMs);
+        }
+
+        answerPlay = playSeq;
+        answer = playSeq.map(p => noteKey(p.n, p.o));
+        answerDurations = (durs.length === playSeq.length) ? durs : null;
       }
       return;
     }
 
     // random
-    answer = (mode === MODE.single) ? [randNote()] : makeMelody(melodyLen);
+    {
+      const oSnap = (typeof octave === "number") ? octave : 4;
+      const names = (mode === MODE.single) ? [randNote()] : makeMelody(melodyLen);
+      answerPlay = names.map(n => ({ n: String(n).replace(/s/g,'#'), o: oSnap }));
+      answer = answerPlay.map(p => noteKey(p.n, p.o));
+    }
   }
 
   function normalizeNoteInput(note, fallbackOct=4){
@@ -1194,11 +1428,11 @@ async function playNoteOut(note, durMs){
 
     const { name: noteName, octave: useOct } = normalizeNoteInput(note, octave);
 
-    // Built-in piano synth (no external files)
+    // Built-in piano (embedded GM-ish sample). If not ready, fall back to synth/beep.
     if (soundMode === "gmpiano"){
-      // embedded sample-based GM-ish piano
-      playGmPiano(noteName, useOct, durMs, 0.95);
-      return true;
+      const ok = playGmPiano(noteName, useOct, durMs, 0.95);
+      if (ok) return true;
+      // fall through
     }
 
     if (soundMode === "synth"){
@@ -1209,7 +1443,7 @@ async function playNoteOut(note, durMs){
 
     // Samples (piano) + fallback beeps
     if (soundMode === "sample"){
-      const ok = await playSample(noteName, useOct);
+      const ok = await playSample(noteName, useOct, durMs);
       if (ok) return true;
       // fallback beep if missing sample
     }
@@ -1223,7 +1457,30 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
 
 
   async function playAnswer(){
+    // Unified answer playback controller (supports pause/stop)
+    window.__answerPlayCtl = window.__answerPlayCtl || { playing:false, paused:false, idx:0, timer:null, t0:0, mode:"" };
+
+    const ctl = window.__answerPlayCtl;
+
+    // If paused, resume
+    if (ctl.paused){
+      ctl.paused = false;
+      ctl.playing = true;
+      setState("LISTEN", "warn");
+      ensureAudio();
+      __answerStep();
+      return;
+    }
+
     if (!answer.length || playing) return;
+
+    // fresh start
+    ctl.playing = true;
+    ctl.paused = false;
+    ctl.idx = 0;
+    ctl.mode = mode;
+    ctl.t0 = performance.now();
+
     playing = true;
     setState("LISTEN", "warn");
     ensureAudio();
@@ -1231,40 +1488,126 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
     // count-in
     beep(1000, 0.06, 0.05);
 
+    // clear any previous scheduled playback
+    try{ if (ctl.timer) clearTimeout(ctl.timer); }catch(e){}
+    ctl.timer = null;
+
+    // SINGLE / CHORD2 behave like before (pause treated as stop)
     if (mode === MODE.single){
       answerTimings = [performance.now() + 140];
-      setTimeout(() => { window.playNoteOut(answer[0], 420); }, 140);
-      setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, 700);
-      msgEl.textContent = (qSource==="song" ? `曲モード：${(SONGS[songKey]||SONGS.twinkle).title}（キー:${ALL_NOTES[songShiftPc]}）\n単音を聴いたら、鍵盤で当ててね。` : "単音を聴いたら、ドレミのどれか1つを押して当ててね。");
-    } else if (mode === MODE.chord2){
+      ctl.timer = setTimeout(() => {
+        window.playNoteOut((answerPlay&&answerPlay[0]!=null)?answerPlay[0]:answer[0], 420);
+      }, 140);
+      ctl.timer2 = setTimeout(() => {
+        ctl.playing = false; ctl.paused = false; playing = false;
+        setState("YOUR TURN", "warn");
+      }, 700);
+      msgEl.textContent = (qSource==="song" ? `曲モード：${(SONGS[songKey]||SONGS.twinkle).title}（キー:${ALL_NOTES[songShiftPc]}）
+単音を聴いたら、鍵盤で当ててね。` : "単音を聴いたら、ドレミのどれか1つを押して当ててね。");
+      return;
+    }
+    if (mode === MODE.chord2){
       const t0 = performance.now() + 170;
       answerTimings = [t0, t0];
-      setTimeout(() => {
-        window.playNoteOut(answer[0], 520);
-        window.playNoteOut(answer[1], 520);
+      ctl.timer = setTimeout(() => {
+        window.playNoteOut((answerPlay&&answerPlay[0]!=null)?answerPlay[0]:answer[0], 520);
+        window.playNoteOut((answerPlay&&answerPlay[1]!=null)?answerPlay[1]:answer[1], 520);
       }, 170);
-      setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, 820);
+      ctl.timer2 = setTimeout(() => {
+        ctl.playing = false; ctl.paused = false; playing = false;
+        setState("YOUR TURN", "warn");
+      }, 820);
       msgEl.textContent = chordLabel() + " / 2音を聴いたら、同じ2音を押して当ててね（順番OK）。";
-    } else {
-      answerTimings = [];
-      let t = 160;
-      msgEl.textContent = "メロディを聴いたら、同じ順番で入力してね。";
-      for (let i=0;i<answer.length;i++){
-        const start = performance.now() + t;
-        answerTimings.push(start);
-        setTimeout(() => { window.playNoteOut(answer[i], 260); }, t);
-        const step = (answerDurations && Number.isFinite(answerDurations[i])) ? Math.max(80, Math.min(1800, answerDurations[i])) : tempoMs;
-        t += step;
-      }
-      setTimeout(() => { playing = false; setState("YOUR TURN", "warn"); }, t + 140);
+      return;
     }
+
+    // MELODY: sequential scheduler so we can pause/stop
+    answerTimings = [];
+    ctl.idx = 0;
+
+    msgEl.textContent = "メロディを聴いたら、同じ順番で入力してね。";
+
+    // start after small delay
+    ctl.timer = setTimeout(() => {
+      ctl.t0 = performance.now();
+      __answerStep(true);
+    }, 160);
   }
+
+  function __answerStep(isFirst){
+    const ctl = window.__answerPlayCtl || {};
+    if (!ctl.playing || ctl.paused) return;
+
+    const i = ctl.idx || 0;
+    if (i >= (answer?.length || 0)){
+      // done
+      ctl.playing = false; ctl.paused = false;
+      playing = false;
+      setState("YOUR TURN", "warn");
+      return;
+    }
+
+    const now = performance.now();
+    if (isFirst){
+      // timings origin
+    }
+    answerTimings[i] = now;
+
+    const stepMs = (answerDurations && Number.isFinite(answerDurations[i])) ? answerDurations[i] : tempoMs;
+    const lenMs = Math.max(80, Math.min(3000, Math.floor(stepMs * 0.85)));
+    window.playNoteOut((answerPlay && answerPlay[i] != null) ? answerPlay[i] : answer[i], lenMs);
+
+    const waitMs = (answerDurations && Number.isFinite(answerDurations[i])) ? Math.max(80, Math.min(1800, answerDurations[i])) : tempoMs;
+    ctl.idx = i + 1;
+
+    try{ if (ctl.timer) clearTimeout(ctl.timer); }catch(e){}
+    ctl.timer = setTimeout(() => __answerStep(false), waitMs);
+  }
+
+  function __pauseAnswer(){
+    const ctl = window.__answerPlayCtl || (window.__answerPlayCtl = {});
+    if (!playing) return;
+    ctl.paused = true;
+    ctl.playing = true; // keep session
+    try{ if (ctl.timer) clearTimeout(ctl.timer); }catch(e){}
+    try{ if (ctl.timer2) clearTimeout(ctl.timer2); }catch(e){}
+    ctl.timer = null; ctl.timer2 = null;
+    try{ window.__stopAllAudio && window.__stopAllAudio(); }catch(e){}
+    msgEl.textContent = "一時停止中（▶ 再開 で続きから）";
+  }
+
+  function __resumeAnswer(){
+    const ctl = window.__answerPlayCtl || (window.__answerPlayCtl = {});
+    if (!ctl.paused) return;
+    ctl.paused = false;
+    ctl.playing = true;
+    playing = true;
+    setState("LISTEN", "warn");
+    ensureAudio();
+    __answerStep(false);
+  }
+
+  function __stopAnswer(){
+    const ctl = window.__answerPlayCtl || (window.__answerPlayCtl = {});
+    ctl.paused = false;
+    ctl.playing = false;
+    ctl.idx = 0;
+    try{ if (ctl.timer) clearTimeout(ctl.timer); }catch(e){}
+    try{ if (ctl.timer2) clearTimeout(ctl.timer2); }catch(e){}
+    ctl.timer = null; ctl.timer2 = null;
+    playing = false;
+    try{ window.__stopAllAudio && window.__stopAllAudio(); }catch(e){}
+    setState("YOUR TURN", "warn");
+    msgEl.textContent = "停止しました。";
+  }
+
+  try{ window.__pauseAnswer = __pauseAnswer; window.__resumeAnswer = __resumeAnswer; window.__stopAnswer = __stopAnswer; }catch(e){}
 
   function judgeSingle(pressedNote, pressedTime){
   const ref = answerTimings[0] ?? pressedTime;
   const diff = Math.abs(pressedTime - ref);
 
-  const pitchOk = (pressedNote === answer[0]);
+  const pitchOk = (String(pressedNote) === String(answer[0]));
 
   let overall = "MISS";
   if (pitchOk){
@@ -1352,6 +1695,7 @@ else if (allOkOrBetter) grade = "OK";
       beep(180, 0.10, 0.05);
     }
     updateHeader();
+    updateQuizBarInfo();
   }
 
   function showAnswerHint(){
@@ -1378,12 +1722,13 @@ else if (allOkOrBetter) grade = "OK";
     }
 
     const now = performance.now();
-    input.push(note);
+    const gotKey = noteKey(note, octave);
+    input.push(gotKey);
     inputTimings.push(now);
     renderChips(inputSeq, input.map(noteLabel), null);
 
     if (mode === MODE.single){
-      const r = judgeSingle(note, now);
+      const r = judgeSingle(gotKey, now);
       const jtxt = `${r.overall}（音:${r.pitchOk?"○":"×"} / timing:${r.timing} / ${Math.round(r.diff)}ms）`;
       renderChips(judgeSeq, [jtxt], () => (r.overall==="MISS" ? "ng":"ok"));
       award(r.overall);
@@ -1396,7 +1741,10 @@ else if (allOkOrBetter) grade = "OK";
         const jtxt = `${r.overall}（音:${r.pitchOk?"○":"×"} / ${Math.round(r.diff)}ms）`;
         renderChips(judgeSeq, [jtxt], () => (r.overall==="MISS" ? "ng":"ok"));
         award(r.overall);
-        if (r.overall !== "MISS"){ flashKey(input[0]); flashKey(input[1]); }
+        if (r.overall !== "MISS"){
+          flashKey(String(input[0]).replace(/-?\d+$/,''));
+          flashKey(String(input[1]).replace(/-?\d+$/,''));
+        }
         if (r.overall === "MISS") showAnswerHint();
       } else {
         msgEl.textContent = "もう1音押して2音そろえてね（順番OK）。";
@@ -1423,6 +1771,7 @@ else if (allOkOrBetter) grade = "OK";
 
   function newQuestion(){
     resetRoundUI();
+    try{ __updateKeyBox(); }catch(e){}
     buildAnswer();
     setState("LISTEN", "warn");
     msgEl.textContent = "聴く準備…";
@@ -1441,7 +1790,51 @@ else if (allOkOrBetter) grade = "OK";
   // Events
   newBtn.addEventListener("click", () => { ensureAudio(); if (soundMode === "sample") ensurePreload(); newQuestion(); });
   playBtn.addEventListener("click", () => { ensureAudio(); if (soundMode === "sample") ensurePreload(); playAnswer(); });
+
+  // Answer playback controls (pause/resume/stop)
+  try{
+    pauseBtn.addEventListener("click", () => { ensureAudio(); if (typeof window.__pauseAnswer === "function") window.__pauseAnswer(); });
+    resumeBtn.addEventListener("click", () => { ensureAudio(); if (soundMode === "sample") ensurePreload(); if (typeof window.__resumeAnswer === "function") window.__resumeAnswer(); });
+    stopBtn2.addEventListener("click", () => { ensureAudio(); if (typeof window.__stopAnswer === "function") window.__stopAnswer(); });
+  }catch(e){}
+
   resetBtn.addEventListener("click", () => resetAll());
+
+  function __getMeasureStarts(){
+    const s = (window.SONGS && window.SONGS[songKey]) ? window.SONGS[songKey] : null;
+    return s && Array.isArray(s.measureStarts) ? s.measureStarts : null;
+  }
+  function __currentMeasureIndex(){
+    const starts = __getMeasureStarts();
+    if (!starts || !starts.length) return null;
+    // find greatest k with starts[k] <= songPos
+    let lo=0, hi=starts.length-1, ans=0;
+    while (lo<=hi){
+      const mid=(lo+hi)>>1;
+      if (starts[mid] <= songPos){ ans=mid; lo=mid+1; }
+      else hi=mid-1;
+    }
+    return ans;
+  }
+  function __gotoMeasure(mIdx){
+    const starts = __getMeasureStarts();
+    if (!starts || !starts.length) { msgEl.textContent = "この曲は小節情報がありません（MIDIを読み込み直してね）"; return; }
+    const mi = Math.max(0, Math.min(starts.length-1, mIdx|0));
+    songPos = starts[mi];
+    quizNowMeasure = mi;
+    updateQuizBarInfo();
+    msgEl.textContent = `小節移動：${mi+1}/${starts.length}（次の「問題出す」から反映）`;
+  }
+  function __refreshBarBtns(){
+    const has = !!(__getMeasureStarts() && __getMeasureStarts().length);
+    if (barHomeBtn) barHomeBtn.disabled = !has || (qSource !== "song");
+    if (barPrevBtn) barPrevBtn.disabled = !has || (qSource !== "song");
+    if (barNextBtn) barNextBtn.disabled = !has || (qSource !== "song");
+  }
+  if (barHomeBtn) barHomeBtn.addEventListener("click", ()=>{ const starts=__getMeasureStarts(); if(!starts) return; __gotoMeasure(0); });
+  if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMeasureIndex(); if(cur==null) return; __gotoMeasure(cur-1); });
+  if (barNextBtn) barNextBtn.addEventListener("click", ()=>{ const cur=__currentMeasureIndex(); if(cur==null) return; __gotoMeasure(cur+1); });
+
 
 
   function onAnyKeyPointerDown(e){
@@ -1488,8 +1881,10 @@ else if (allOkOrBetter) grade = "OK";
       qSource = srcSel ? srcSel.value : "random";
   songKey = songSel ? songSel.value : "twinkle";
   refreshSongUi();
+  try{ __refreshBarBtns(); }catch(_e){}
       songPos = 0;
       resetAll();
+      try{ __refreshBarBtns(); }catch(_e){}
     });
   }
   if (songSel){
@@ -1497,6 +1892,7 @@ else if (allOkOrBetter) grade = "OK";
       songKey = songSel.value;
       songPos = 0;
       resetAll();
+      try{ __refreshBarBtns(); }catch(_e){}
     });
   }
   refreshSongUi();
@@ -1539,9 +1935,10 @@ else if (allOkOrBetter) grade = "OK";
 
   sharpQuiz.addEventListener("change", () => { includeSharps = !!sharpQuiz.checked; resetAll(); });
 
-  lenRange.addEventListener("input", () => {
-    melodyLen = Number(lenRange.value);
-    lenV.textContent = melodyLen;
+  barRange.addEventListener("input", () => {
+    barsLen = Number(barRange.value);
+    barV.textContent = barsLen;
+    // small UX: in melody mode show both
     updateHeader();
     resetAll();
   });
@@ -1589,7 +1986,6 @@ soundBtn.addEventListener("click", () => {
   });
 
   // init
-  lenV.textContent = melodyLen;
   tempoV.textContent = tempoMs;
   perfV.textContent = perfectMs;
   goodV.textContent = goodMs;
@@ -1676,7 +2072,10 @@ function parseMIDI(arrayBuffer){
     let absTick = 0;
     let runningStatus = null;
     let noteOns = [];
+    let notes = [];
     let tempoEvents = [];
+    let keyEvents = [];
+    const __active = new Map(); // key: ch|note -> startTick
     let name = "";
 
     while (off < trkEnd){
@@ -1704,6 +2103,12 @@ function parseMIDI(arrayBuffer){
           const mpq = (u8[off]<<16) | (u8[off+1]<<8) | u8[off+2];
           tempoEvents.push({tick:absTick, mpq});
         }
+        else if (type === 0x59 && len === 2){
+          // Key Signature: sf (int8), mi (0=major,1=minor)
+          const sf = (u8[off] << 24) >> 24; // sign extend
+          const mi = u8[off+1];
+          keyEvents.push({tick:absTick, sf, mi});
+        }
         off += len;
         continue;
       }
@@ -1715,14 +2120,32 @@ function parseMIDI(arrayBuffer){
 
       const hi = status & 0xF0;
       const ch = status & 0x0F;
+
+      // Note on/off (capture durations)
       if (hi === 0x90 || hi === 0x80){
-        const note = u8[off++]; 
+        const note = u8[off++];
         const vel  = u8[off++];
         const isOn = (hi === 0x90) && vel > 0;
+        const key = `${ch}|${note}`;
+
         if (isOn){
           noteOns.push({tick:absTick, note, vel, ch});
+          __active.set(key, absTick);
+        } else {
+          // note-off (either 0x80 or 0x90 vel=0)
+          const st = __active.get(key);
+          if (Number.isFinite(st)){
+            const durTick = Math.max(1, absTick - st);
+            notes.push({tick:st, note, durTick, ch});
+            __active.delete(key);
+          }
         }
-      } else if (hi === 0xA0 || hi === 0xB0 || hi === 0xE0){
+      } else if (hi === 0xB0){
+        // Control change (capture sustain pedal CC64 optionally later)
+        const cc = u8[off++]; 
+        const val = u8[off++];
+        // (keep for future)
+      } else if (hi === 0xA0 || hi === 0xE0){
         off += 2;
       } else if (hi === 0xC0 || hi === 0xD0){
         off += 1;
@@ -1732,7 +2155,7 @@ function parseMIDI(arrayBuffer){
       }
     }
 
-    tracks.push({ index:ti, name, noteOns, tempoEvents });
+    tracks.push({ index:ti, name, noteOns, notes, tempoEvents, keyEvents });
     off = trkEnd;
   }
 
@@ -1769,6 +2192,196 @@ function __getGlobalTempoEvents(parsed){
   return out;
 }
 
+
+// ---- Key signature utilities (hint display) ----
+function __getGlobalKeySig(parsed){
+  const events = [];
+  if (parsed && parsed.tracks){
+    for (const t of parsed.tracks){
+      if (t && t.keyEvents && t.keyEvents.length){
+        for (const e of t.keyEvents){
+          if (e && Number.isFinite(e.tick) && Number.isFinite(e.sf)) events.push({tick:e.tick, sf:e.sf, mi:e.mi|0});
+        }
+      }
+    }
+  }
+  events.sort((a,b)=>a.tick-b.tick);
+  if (!events.length) return null;
+  // choose earliest (prefer tick=0 if exists)
+  const at0 = events.find(e=>e.tick===0);
+  return at0 || events[0];
+}
+function __accToPretty(s){
+  return String(s).replace(/b/g,'♭').replace(/#/g,'♯');
+}
+function __keySigToName(sf, mi){
+  // sf: -7..+7 (flats..sharps)
+  const maj = ["Cb","Gb","Db","Ab","Eb","Bb","F","C","G","D","A","E","B","F#","C#"];
+  const min = ["Ab","Eb","Bb","F","C","G","D","A","E","B","F#","C#","G#","D#","A#"];
+  const idx = sf + 7;
+  if (idx < 0 || idx >= maj.length) return "不明";
+  const root = mi ? min[idx] : maj[idx];
+  const name = __accToPretty(root) + (mi ? "マイナー" : "メジャー");
+  return name;
+}
+
+// ---- Key inference (when MIDI has no Key Signature meta) ----
+// Krumhansl-Schmuckler key profiles (major/minor) for pitch class correlation.
+const __KS_MAJOR = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+const __KS_MINOR = [6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+
+function __rot(arr, k){
+  const n = arr.length;
+  k = ((k % n) + n) % n;
+  return arr.slice(k).concat(arr.slice(0,k));
+}
+function __corr(a,b){
+  // Pearson correlation
+  const n=a.length;
+  let ma=0, mb=0;
+  for(let i=0;i<n;i++){ ma+=a[i]; mb+=b[i]; }
+  ma/=n; mb/=n;
+  let num=0, da=0, db=0;
+  for(let i=0;i<n;i++){
+    const xa=a[i]-ma, xb=b[i]-mb;
+    num += xa*xb; da += xa*xa; db += xb*xb;
+  }
+  const den = Math.sqrt(da*db) || 1;
+  return num/den;
+}
+function __inferKeyFromNotes(noteObjs){
+  // noteObjs: [{n:"C#", o:4, ...}, ...] or midi numbers
+  const hist = new Array(12).fill(0);
+  for(const it of (noteObjs||[])){
+    let n = null;
+    if (typeof it === "number"){
+      n = __midiToNoteName(it).n;
+    }else if (it && typeof it === "object"){
+      n = it.n ?? it.note ?? it.name;
+    }
+    if (!n) continue;
+    const pc = __PC[String(n).replace(/s/g,"#")];
+    if (pc==null) continue;
+    hist[pc] += 1;
+  }
+  const total = hist.reduce((s,x)=>s+x,0);
+  if (!total) return null;
+
+  let best = {score:-1e9, pc:0, mi:false};
+  for(let pc=0; pc<12; pc++){
+    const majProf = __rot(__KS_MAJOR, pc);
+    const minProf = __rot(__KS_MINOR, pc);
+    const sMaj = __corr(hist, majProf);
+    const sMin = __corr(hist, minProf);
+    if (sMaj > best.score) best = {score:sMaj, pc, mi:false};
+    if (sMin > best.score) best = {score:sMin, pc, mi:true};
+  }
+  const root = __pcToName(best.pc);
+  const name = root + (best.mi ? "マイナー" : "メジャー") + "（推定）";
+  return {pc: best.pc, mi: best.mi, name};
+}
+let __currentKeyHint = "（未解析）";
+let __globalKeySig = null; // {sf, mi}
+let __inferredKey = null;  // {pc:number, mi:boolean, name:string} 推定キー
+let __transposeToC = false;
+
+
+function __rootToPc(root){
+  // root like "C", "F#", "Db", "Cb"
+  if (!root) return null;
+  const m = String(root).match(/^([A-G])([#b]{0,2})$/);
+  if (!m) return null;
+  const base = {C:0,D:2,E:4,F:5,G:7,A:9,B:11}[m[1]];
+  let acc = m[2] || "";
+  let v = base;
+  for (const ch of acc){
+    if (ch === "#") v += 1;
+    else if (ch === "b") v -= 1;
+  }
+  v = ((v % 12) + 12) % 12;
+  return v;
+}
+function __pcToName(pc){
+  const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  return names[((pc%12)+12)%12];
+}
+function __nearestShiftPc(targetPc, origPc){
+  // return shift in semitones in range [-6..+6] for nicer register
+  const diff = ((targetPc - origPc) % 12 + 12) % 12;
+  return diff > 6 ? diff - 12 : diff;
+}
+function __keySigRoot(sf, mi){
+  const maj = ["Cb","Gb","Db","Ab","Eb","Bb","F","C","G","D","A","E","B","F#","C#"];
+  const min = ["Ab","Eb","Bb","F","C","G","D","A","E","B","F#","C#","G#","D#","A#"];
+  const idx = (sf|0) + 7;
+  if (idx < 0 || idx >= maj.length) return null;
+  return mi ? min[idx] : maj[idx];
+}
+function __computeSongShiftPc(){
+  if (!__transposeToC) return 0;
+
+  // Prefer meta key signature if available
+  let mi = null;
+  let root = null;
+  if (__globalKeySig){
+    mi = !!__globalKeySig.mi;
+    root = __keySigRoot(__globalKeySig.sf, __globalKeySig.mi);
+  }
+
+  // Fallback: parse displayed key hint like "G", "Gメジャー", "E minor", "Eマイナー"
+  if (!root){
+    const hint = String(__currentKeyHint || "").trim();
+    if (hint && hint !== "不明" && hint.toLowerCase() !== "unknown"){
+      // Extract something like C, D#, Db, F#, Bb
+      const mm = hint.match(/([A-G])\s*(#|♯|b|♭)?/i);
+      if (mm){
+        root = (mm[1] || "").toUpperCase();
+        const acc = mm[2];
+        if (acc === "#" || acc === "♯") root += "#";
+        if (acc === "b" || acc === "♭") root += "b";
+      }
+      // Detect minor
+      const low = hint.toLowerCase();
+      mi = (low.includes("minor") || low.match(/\bm\b/) || hint.includes("マイナー") || hint.includes("短調")) ? true : false;
+    }
+  }
+
+  // If still unknown, use inferred key from note histogram
+  if (!root && __inferredKey){
+    mi = !!__inferredKey.mi;
+    // Use pitch class directly, avoid naming ambiguities
+    const targetPc = (mi ? 9 : 0); // minor -> A, major -> C
+    return __nearestShiftPc(targetPc, __inferredKey.pc);
+  }
+
+  if (!root) return 0;
+  const origPc = __rootToPc(root);
+  if (origPc == null) return 0;
+  const targetPc = (mi ? 9 : 0); // minor -> A, major -> C
+  return __nearestShiftPc(targetPc, origPc);
+}
+function __computePlayKeyName(){
+  if (!__globalKeySig) return (__currentKeyHint || "不明");
+  if (!__transposeToC) return __keySigToName(__globalKeySig.sf, __globalKeySig.mi);
+  return (__globalKeySig.mi ? "Aマイナー" : "Cメジャー");
+}
+function __updateKeyBox(){
+  const origName = (__globalKeySig ? __keySigToName(__globalKeySig.sf, __globalKeySig.mi) : (__inferredKey ? __inferredKey.name : (__currentKeyHint||"不明")));
+  const playName = __computePlayKeyName();
+  const elOrig = document.getElementById("keyOrigVal");
+  const elPlay = document.getElementById("keyPlayVal");
+  if (elOrig) elOrig.textContent = origName;
+  if (elPlay) elPlay.textContent = playName;
+  const elLegacy = document.getElementById("keyHintVal"); // settings side (if exists)
+  if (elLegacy) elLegacy.textContent = origName;
+  // keep global shift updated
+  songShiftPc = __computeSongShiftPc();
+}
+
+function __setKeyHintText(s){
+  __currentKeyHint = s || "不明";
+  __updateKeyBox();
+}
 function __ticksToMs(tickStart, tickEnd, tempoMap, ticksPerBeat, ticksPerSecond){
   if (!Number.isFinite(tickStart) || !Number.isFinite(tickEnd)) return 0;
   let a = tickStart, b = tickEnd;
@@ -1811,7 +2424,8 @@ function buildSongFromTrack(parsed, trackIndex){
   const tr = parsed.tracks.find(t => t.index === trackIndex);
   if (!tr) throw new Error("トラックが見つかりません");
 
-  const ons = tr.noteOns.slice().sort((a,b)=> a.tick-b.tick || a.note-b.note);
+  const evs = (tr.notes && tr.notes.length) ? tr.notes.slice() : tr.noteOns.slice().map(x=>({tick:x.tick,note:x.note,durTick:null,ch:x.ch}));
+  const ons = evs.sort((a,b)=> a.tick-b.tick || a.note-b.note);
   const out = [];
   let i = 0;
 
@@ -1830,7 +2444,7 @@ function buildSongFromTrack(parsed, trackIndex){
     const last = out[out.length-1];
     const minGap = Math.max(1, Math.floor(parsed.ticksPerBeat/16));
     if (!last || last.n !== nn.n || last.o !== nn.o || (tick - last.__tick) >= minGap){
-      out.push({ n: nn.n, o: nn.o, d: 1, __tick: tick });
+      out.push({ n: nn.n, o: nn.o, d: 1, __tick: tick, __durTick: (best.durTick!=null?best.durTick:null) });
     }
 
     i = j;
@@ -1845,9 +2459,178 @@ function buildSongFromTrack(parsed, trackIndex){
     const nxt = out[k+1];
     const dt = (nxt && Number.isFinite(nxt.__tick)) ? (nxt.__tick - cur.__tick) : Math.floor(parsed.ticksPerBeat/2);
     cur.__dtTick = Math.max(1, dt);
+    if (!Number.isFinite(cur.__durTick)){
+      // If duration is unknown, assume ~80% of the gap to next note
+      cur.__durTick = Math.max(1, Math.floor(cur.__dtTick * 0.8));
+    }
   }
   return out;
 }
+
+
+/**
+ * Build song notes from a specific MIDI channel (pseudo track).
+ * Uses track 0 notes (or first track) and filters by ch.
+ */
+function buildSongFromChannel(parsed, ch){
+  const base = (parsed.tracks && parsed.tracks.length) ? (parsed.tracks[0]) : null;
+  if (!base) throw new Error("トラックが見つかりません");
+  const src = (base.notes && base.notes.length)
+    ? base.notes.filter(x => (x.ch === ch))
+    : base.noteOns.filter(x => (x.ch === ch)).map(x=>({tick:x.tick,note:x.note,durTick:null,ch:x.ch}));
+  if (!src || src.length===0) throw new Error("このチャンネルにノートがありません");
+  // Reuse logic by faking a track object
+  const fake = { index: -1, name: `Ch ${ch+1}`, notes: src, noteOns: src };
+  const tmp = { ...parsed, tracks: [fake] };
+  return buildSongFromTrack(tmp, -1);
+}
+
+/**
+ * Source selector
+ * - "track:<n>" for real tracks
+ * - "ch:<n>" for channel pseudo track (0-based)
+ */
+function buildSongFromSource(parsed, sourceId){
+  if (typeof sourceId !== "string") sourceId = String(sourceId ?? "");
+  if (sourceId.startsWith("track:")){
+    const idx = parseInt(sourceId.slice(6), 10);
+    if (!Number.isFinite(idx)) throw new Error("トラックID不正");
+    return buildSongFromTrack(parsed, idx);
+  }
+  if (sourceId.startsWith("ch:")){
+    const ch = parseInt(sourceId.slice(3), 10);
+    if (!Number.isFinite(ch)) throw new Error("チャンネルID不正");
+    return buildSongFromChannel(parsed, ch);
+  }
+  // Backward compat: numeric means track index
+  const idx = parseInt(sourceId, 10);
+  if (Number.isFinite(idx)) return buildSongFromTrack(parsed, idx);
+  throw new Error("ソースが選択されていません");
+}
+
+/** median helper */
+function __median(arr){
+  if (!arr || arr.length===0) return NaN;
+  const a = arr.slice().sort((x,y)=>x-y);
+  const m = Math.floor(a.length/2);
+  return (a.length%2)? a[m] : (a[m-1]+a[m])/2;
+}
+
+/**
+ * Build selectable list:
+ * - If multiple real tracks: show real tracks (as before)
+ * - If a single real track: also show channel pseudo tracks (Ch1..Ch16) so it matches other apps/pianos.
+ * Auto default: choose "right hand" = highest median pitch (excluding drums Ch10).
+ */
+function __buildSelectableSources(parsed){
+  const out = [];
+  const tracks = parsed.tracks || [];
+  // Real tracks
+  tracks.forEach(t=>{
+    const notes = (t.noteOns || []).map(x=>x.note);
+    const med = __median(notes);
+    out.push({
+      id: `track:${t.index}`,
+      kind: "track",
+      trackIndex: t.index,
+      label: `Track ${t.index}（notes ${(t.noteOns||[]).length}）${t.name?`: ${t.name}`:""}`,
+      count: (t.noteOns||[]).length,
+      median: Number.isFinite(med) ? med : -1,
+    });
+  });
+
+  // Channel pseudo tracks when only 1 track (common for format0)
+  if (tracks.length === 1){
+    const base = tracks[0];
+    const byCh = new Map();
+    (base.noteOns || []).forEach(n=>{
+      const ch = (n.ch ?? 0);
+      if (!byCh.has(ch)) byCh.set(ch, []);
+      byCh.get(ch).push(n.note);
+    });
+    // Add "ALL" entry first (real track already exists) then channel entries
+    for (let ch=0; ch<16; ch++){
+      const notes = byCh.get(ch) || [];
+      if (!notes.length) continue;
+      const med = __median(notes);
+      // label with special note for drums
+      const isDrum = (ch === 9); // MIDI Ch10 (1-based)
+      out.push({
+        id: `ch:${ch}`,
+        kind: "channel",
+        ch,
+        label: `Ch ${ch+1}${isDrum?"（Drums）":""}（notes ${notes.length}）`,
+        count: notes.length,
+        median: Number.isFinite(med) ? med : -1,
+      });
+    }
+  }
+  return out;
+}
+
+function __chooseDefaultSourceId(sources){
+  if (!sources || !sources.length) return "";
+  // Prefer channel (right hand) if any channel sources exist
+  const chSources = sources.filter(s=>s.kind==="channel");
+  if (chSources.length){
+    // Exclude drums
+    const cand = chSources.filter(s=>s.ch !== 9);
+    const list = cand.length ? cand : chSources;
+    list.sort((a,b)=> (b.median - a.median) || (b.count - a.count));
+    return list[0].id;
+  }
+  // Fallback: most notes among real tracks
+  const trSources = sources.filter(s=>s.kind==="track");
+  trSources.sort((a,b)=> (b.count - a.count) || (b.median - a.median));
+  
+// --- Measure map (for bar navigation in song quiz) ---
+// We approximate measures using the MIDI ticks-per-beat and the global time signature.
+// If time signature meta is missing, we default to 4/4.
+function __getGlobalTimeSignature(parsed){
+  try{
+    // Look for the first time signature meta event in any track
+    const tracks = parsed?.tracks || [];
+    for (const t of tracks){
+      const evs = t?.events || [];
+      for (const e of evs){
+        if (e && e.type === "meta" && (e.metaType === 0x58 || e.subtype === "timeSignature")){
+          const nn = e.nn ?? e.numerator ?? e.num ?? 4;
+          const dd = e.dd ?? e.denominator ?? e.den ?? 4;
+          return {nn: Number(nn)||4, dd: Number(dd)||4};
+        }
+      }
+    }
+  }catch(_e){}
+  return {nn:4, dd:4};
+}
+window.__getGlobalTimeSignature = __getGlobalTimeSignature;
+
+window.__buildMeasureMapForNotes = function(notes, ticksPerBeat, timeSig){
+  const nn = Number(timeSig?.nn || 4);
+  const dd = Number(timeSig?.dd || 4);
+  // ticks per quarter = ticksPerBeat (TPQ) when using PPQ. If SMPTE, ticksPerBeat may be null; fall back.
+  const tpq = Number(ticksPerBeat || 480);
+  // beatsPerBar in quarter-note units: nn * (4/dd)
+  const beatsPerBar = nn * (4 / dd);
+  const measureTicks = Math.max(1, Math.round(tpq * beatsPerBar));
+
+  const starts = [];
+  const nums = new Array(notes.length);
+  let lastM = null;
+  for (let i=0;i<notes.length;i++){
+    const tick = Number(notes[i]?.__tick || 0);
+    const m = Math.floor(tick / measureTicks);
+    nums[i] = m;
+    if (lastM === null || m !== lastM){
+      starts.push(i);
+      lastM = m;
+    }
+  }
+  return {starts, nums, nn, dd};
+}
+return trSources[0]?.id || sources[0].id;
+}
+
 
 // Wire UI
 (() => {
@@ -1857,13 +2640,73 @@ function buildSongFromTrack(parsed, trackIndex){
   const useBtn = document.getElementById("midiUseTrackBtn");
   const hint = document.getElementById("midiHint");
   const previewBtn = document.getElementById("midiPreview8Btn");
+  let __previewRunId = 0;
+  const playAllBtn = document.getElementById("midiPlayAllBtn");
+  let __isAllPlaying = false;
 
   if (!fileEl || !loadBtn || !trSel || !useBtn) return;
 
   let __parsed = null;
 
-  function __registerTrackAsSong(idx){
-    const notes = buildSongFromTrack(__parsed, idx);
+  // --- Time Signature helper (global-safe; works even if module script is blocked) ---
+  if (!window.__getGlobalTimeSignature){
+    window.__getGlobalTimeSignature = function(parsed){
+      try{
+        const tracks = parsed && parsed.tracks ? parsed.tracks : [];
+        for (const t of tracks){
+          const evs = t && t.events ? t.events : [];
+          for (const e of evs){
+            if (e && e.type === "meta" && (e.metaType === 0x58 || e.subtype === "timeSignature")){
+              const nn = e.nn ?? e.numerator ?? e.num ?? 4;
+              const dd = e.dd ?? e.denominator ?? e.den ?? 4;
+              return { nn: Number(nn)||4, dd: Number(dd)||4 };
+            }
+          }
+        }
+      }catch(_e){}
+      return { nn:4, dd:4 };
+    };
+  }
+  // Also provide a global name so older code paths never crash
+  if (typeof __getGlobalTimeSignature === "undefined"){
+    var __getGlobalTimeSignature = window.__getGlobalTimeSignature;
+  }
+
+  
+// --- Global shim: measure map builder (ensures availability across module / IIFE scopes) ---
+window.__buildMeasureMapForNotes = window.__buildMeasureMapForNotes || function(notes, ticksPerBeat, timeSig){
+  const nn = Number((timeSig && (timeSig.nn ?? timeSig.numerator)) || 4);
+  const dd = Number((timeSig && (timeSig.dd ?? timeSig.denominator)) || 4);
+  const tpq = Number(ticksPerBeat || 480);
+  const beatsPerBar = nn * (4 / dd);
+  const measureTicks = Math.max(1, Math.round(tpq * beatsPerBar));
+
+  const starts = [];
+  const nums = new Array((notes && notes.length) || 0);
+  let lastM = null;
+  for (let i=0;i<(notes||[]).length;i++){
+    const tick = Number((notes[i] && (notes[i].__tick ?? notes[i].tick ?? notes[i].startTick)) || 0);
+    const m = Math.floor(tick / measureTicks);
+    nums[i] = m;
+    if (lastM === null || m !== lastM){
+      starts.push(i);
+      lastM = m;
+    }
+  }
+  return { starts, nums, nn, dd, tpq, beatsPerBar, measureTicks };
+};
+
+function __registerTrackAsSong(sourceId){
+    const notes = buildSongFromSource(__parsed, sourceId);
+
+    // If MIDI has no Key Signature meta, infer key from the selected source notes
+    try{
+      if (!__globalKeySig){
+        __inferredKey = __inferKeyFromNotes(notes) || null;
+        if (__inferredKey) __setKeyHintText(__inferredKey.name);
+      }
+    }catch(_e){ /* ignore */ }
+
     const id = "userMidi";
     const title = "ユーザーMIDI（読み込み）";
     window.SONGS = window.SONGS || {};
@@ -1877,7 +2720,9 @@ function buildSongFromTrack(parsed, trackIndex){
       // fallback if somehow 0
       if (!Number.isFinite(cur.__dtMs) || cur.__dtMs <= 0) cur.__dtMs = 60000 / (bpm || 120);
     }
-    window.SONGS[id] = { title, bpm, notes };
+    const __ts = (window.__getGlobalTimeSignature ? window.__getGlobalTimeSignature(__parsed) : __getGlobalTimeSignature(__parsed));
+    const __mm = window.__buildMeasureMapForNotes(notes, __parsed.ticksPerBeat, __ts);
+    window.SONGS[id] = { title, bpm, notes, timeSig: __ts, measureStarts: __mm.starts, measureNums: __mm.nums };
 
     // Ensure song select includes it + select it
     const songSel = document.getElementById("songSel");
@@ -1916,36 +2761,44 @@ function buildSongFromTrack(parsed, trackIndex){
       const ab = await f.arrayBuffer();
       __parsed = parseMIDI(ab);
 
-      // populate track list
+      // Key hint
+      try{
+        const ks = __getGlobalKeySig(__parsed);
+        __globalKeySig = ks ? {sf: ks.sf|0, mi: ks.mi|0} : null;
+        if (ks) __setKeyHintText(__keySigToName(ks.sf, ks.mi));
+        else __setKeyHintText("不明（Key Signatureなし）");
+      }catch(_e){ __setKeyHintText("不明"); }
+      // populate track/channel list
       trSel.innerHTML = "";
-      const tracks = __parsed.tracks;
-      if (!tracks || tracks.length === 0){ throw new Error("トラックが0件です（MIDIが空か、解析できませんでした）"); }
+      const sources = __buildSelectableSources(__parsed);
+      if (!sources || sources.length === 0){ throw new Error("トラックが0件です（MIDIが空か、解析できませんでした）"); }
 
-      // Choose default: most note-ons
-      let bestIdx = 0;
-      let bestCount = -1;
-      tracks.forEach((t, k)=>{
-        const labelName = t.name ? `: ${t.name}` : "";
+      // Default: right-hand channel (highest median pitch) when available, else most notes
+      const bestId = __chooseDefaultSourceId(sources);
+
+      sources.forEach((s)=>{
         const opt = document.createElement("option");
-        opt.value = String(t.index);
-        opt.textContent = `Track ${t.index}（notes ${t.noteOns.length}）${labelName}`;
+        opt.value = s.id;
+        opt.textContent = s.label;
         trSel.appendChild(opt);
-        if (t.noteOns.length > bestCount){ bestCount = t.noteOns.length; bestIdx = t.index; }
       });
-      trSel.value = String(bestIdx);
+
+      trSel.value = bestId;
       trSel.disabled = false;
-      trSel.size = Math.min(12, Math.max(4, tracks.length));
+      trSel.size = Math.min(12, Math.max(4, sources.length));
       trSel.style.display = "";
 
       useBtn.disabled = false;
-      hint.textContent = `✅ 読み込み成功: format=${__parsed.format}, tracks=${tracks.length}（おすすめ: Track ${bestIdx}）`;
-      // Auto-register the recommended track as the current song (no extra click needed)
+      const chCount = sources.filter(s=>s.kind==="channel").length;
+      const recLabel = (sources.find(s=>s.id===bestId)?.label) || bestId;
+      hint.textContent = `✅ 読み込み成功: format=${__parsed.format}, tracks=${(__parsed.tracks||[]).length}${chCount?`, channels=${chCount}`:""}（おすすめ: ${recLabel}）`;
+      // Auto-register the recommended source as the current song
       try{
-        const r = __registerTrackAsSong(bestIdx);
-        hint.textContent += ` / ✅ 現在の曲: ${r.title}（Track ${bestIdx}）`;
+        const r = __registerTrackAsSong(bestId);
+        hint.textContent += ` / ✅ 現在の曲: ${r.title}`;
       }catch(e){
         console.warn(e);
-        hint.textContent += " / ⚠️ 自動登録できませんでした（トラック選択後に「このトラックを曲として使う」を押してください）";
+        hint.textContent += " / ⚠️ 自動登録できませんでした（選択後に「このトラックを曲として使う」を押してください）";
       }
 
     }catch(e){
@@ -1962,22 +2815,29 @@ function buildSongFromTrack(parsed, trackIndex){
   }
   function __sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 
-  async function __preview8sFromTrack(){
+  async function __preview8sFromTrack(runId){
     try{
       if (!__parsed){ alert("先にMIDIを読み込んでください"); return; }
-      const idx = parseInt(trSel.value, 10);
-      if (!Number.isFinite(idx)){ alert("トラックを選んでください"); return; }
-      const notes = buildSongFromTrack(__parsed, idx); // [{n,o,d,__tick,__dtTick}]
+      const sourceId = String(trSel.value||"");
+      if (!sourceId){ alert("トラック/チャンネルを選んでください"); return; }
+      const notes = buildSongFromSource(__parsed, sourceId); // [{n,o,d,__tick,__dtTick}]
       const tempoMap = __getGlobalTempoEvents(__parsed);
       const t0 = performance.now();
       for (let i=0;i<notes.length;i++){
+        if (runId !== __previewRunId) return;
         const nn = notes[i];
-        const dtTick = Number.isFinite(nn.__dtTick) ? nn.__dtTick : Math.floor(__parsed.ticksPerBeat/2);
-        const dur = Math.max(60, Math.round(__ticksToMs(nn.__tick, nn.__tick + dtTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
+        if (runId !== __previewRunId) break;
+        const gapTick = Number.isFinite(nn.__dtTick) ? nn.__dtTick : Math.floor((__parsed.ticksPerBeat||480)/2);
+        const durTick = Number.isFinite(nn.__durTick) ? nn.__durTick : Math.max(1, Math.floor(gapTick*0.8));
+        const dur = Math.max(60, Math.round(__ticksToMs(nn.__tick, nn.__tick + durTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         // Play note with its own octave (no global octave mutation)
         const noteObj = (nn && typeof nn === "object") ? nn : { n: nn, o: parseInt(octSel.value || "4", 10) };
-        await window.playNoteOut(noteObj, Math.min(600, dur)); // note length (sound)
-        await __sleep(dur); // spacing (rhythm)
+        const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
+        const playNote = window.__songItemToPlayNote(noteObj, __shift);
+        await window.playNoteOut(playNote, dur); // note length (sound)
+        const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
+        await __sleep(gapMs); // spacing (rhythm)
+        if (runId !== __previewRunId) break;
         if (performance.now() - t0 >= 8000) break;
       }
     }catch(e){
@@ -1986,16 +2846,106 @@ function buildSongFromTrack(parsed, trackIndex){
     }
   }
 
-  if (previewBtn){
-    previewBtn.addEventListener("click", () => { __preview8sFromTrack(); });
+
+  
+  // ---- Global helper (block-scope safe): song item -> playable note (name+octave)
+  // Some browsers treat function declarations inside blocks as block-scoped in strict mode.
+  // Export to window so later functions can always access it.
+  if (!window.__songItemToPlayNote){
+    window.__songItemToPlayNote = function(item, shiftPc){
+      // item: {n:"C", o:4} or {note:"C", octave:4} or "C"
+      let n = null;
+      let o = null;
+      if (item && typeof item === "object"){
+        n = item.n ?? item.note ?? item.name ?? null;
+        o = item.o ?? item.octave ?? item.oct ?? null;
+        if (item.midi != null && (n == null || o == null)){
+          // derive from midi if provided
+          const m = Number(item.midi);
+          if (Number.isFinite(m)){
+            o = Math.floor(m/12) - 1;
+            const pc = ((m%12)+12)%12;
+            n = (window.ALL_NOTES || ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"])[pc];
+          }
+        }
+      } else if (typeof item === "string"){
+        n = item;
+      }
+      if (n == null) n = "C";
+      if (o == null) o = 4;
+      const shift = Number(shiftPc||0);
+      if (shift && typeof window.transposeNoteName === "function"){
+        n = window.transposeNoteName(n, shift);
+      }
+      return { n, o };
+    };
   }
 
+async function __playAllFromTrack(runId){
+    try{
+      if (!__parsed){ alert("先にMIDIを読み込んでください"); return; }
+      const sourceId = String(trSel.value||"");
+      if (!sourceId){ alert("トラック/チャンネルを選んでください"); return; }
+      const notes = buildSongFromSource(__parsed, sourceId); // [{n,o,d,__tick,__dtTick,__durTick}]
+      const tempoMap = __getGlobalTempoEvents(__parsed);
+      for (let i=0;i<notes.length;i++){
+        if (runId !== __previewRunId) break;
+        const nn = notes[i];
+        const gapTick = Number.isFinite(nn.__dtTick) ? nn.__dtTick : Math.floor((__parsed.ticksPerBeat||480)/2);
+        const durTick = Number.isFinite(nn.__durTick) ? nn.__durTick : Math.max(1, Math.floor(gapTick*0.8));
+        const dur = Math.max(60, Math.round(__ticksToMs(nn.__tick, nn.__tick + durTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
+        const noteObj = (nn && typeof nn === "object") ? nn : { n: nn, o: parseInt(octSel.value || "4", 10) };
+        const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
+        const playNote = window.__songItemToPlayNote(noteObj, __shift);
+        await window.playNoteOut(playNote, dur);
+        const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
+        await __sleep(gapMs);
+      }
+    }catch(e){
+      console.error(e);
+      alert("再生失敗: " + (e && e.message ? e.message : String(e)));
+    }finally{
+      // reset button state if this run is the latest (or cancelled)
+      if (runId === __previewRunId){
+        __isAllPlaying = false;
+        if (playAllBtn) playAllBtn.textContent = "一曲再生";
+      }
+    }
+  }
+
+  if (previewBtn){
+    previewBtn.addEventListener("click", () => {
+      __previewRunId++;
+      __isAllPlaying = false;
+      if (playAllBtn) playAllBtn.textContent = "一曲再生";
+      try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(e){}
+      __preview8sFromTrack(__previewRunId);
+    });
+  }
+
+  if (playAllBtn){
+    playAllBtn.addEventListener("click", () => {
+      // toggle
+      if (__isAllPlaying){
+        __previewRunId++;
+        __isAllPlaying = false;
+        playAllBtn.textContent = "一曲再生";
+        try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(e){}
+        return;
+      }
+      __previewRunId++;
+      __isAllPlaying = true;
+      playAllBtn.textContent = "停止";
+      try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(e){}
+      __playAllFromTrack(__previewRunId);
+    });
+  }
 useBtn.addEventListener("click", () => {
     try{
       if (!__parsed){ alert("先にMIDIを読み込んでください"); return; }
-      const idx = parseInt(trSel.value, 10);
-      if (!Number.isFinite(idx)){ alert("トラックを選んでください"); return; }
-      __registerTrackAsSong(idx);
+      const sourceId = String(trSel.value||"");
+      if (!sourceId){ alert("トラック/チャンネルを選んでください"); return; }
+      __registerTrackAsSong(sourceId);
       alert("✅ MIDIトラックを曲として登録しました！「問題出す」で出題できます。");
     }catch(e){
       console.error(e);
@@ -2032,6 +2982,16 @@ useBtn.addEventListener("click", () => {
     __unlockPing();
     try{ setState("AUDIO OK","good"); }catch(e){}
 });
+
+  // Cコード化（再生のみ移調。表示オクターブ/鍵盤には影響しない）
+  const __toCSwitch = document.getElementById("toCSwitch");
+  if (__toCSwitch){
+    __toCSwitch.addEventListener("change", ()=>{
+      __transposeToC = !!__toCSwitch.checked;
+      __updateKeyBox();
+    });
+  }
+  __updateKeyBox();
 
   // First user gesture unlock (one-time)
   window.addEventListener("pointerdown", () => {
