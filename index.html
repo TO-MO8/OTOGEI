@@ -992,18 +992,21 @@ function playBuffer(buf, gain=1.0, durMs=null){
 
 
 async function playSample(note, octave, durMs){
-  // If already cached, play immediately (no await on decode/fetch)
+  // Fully await loading the sample so the *first* note is also a real sample (no synthy fallback).
   const key = `${note}${octave}`;
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
     playBuffer(cached.buf, 1.0, durMs);
     return true;
   }
-  // Otherwise, start loading in background and return false now (fallback beep this time)
-  loadSample(note, octave).then(entry => {
-    if (entry.ok && entry.buf) playBuffer(entry.buf, 1.0, durMs);
-  }).catch(() => {});
-  return false;
+  try{
+    const entry = await loadSample(note, octave);
+    if (entry && entry.ok && entry.buf){
+      playBuffer(entry.buf, 1.0, durMs);
+      return true;
+    }
+  }catch(e){/* ignore */}
+  return false; // caller will fallback
 }
 
   // -------------------------
@@ -1107,10 +1110,6 @@ let soundMode = "synth"; // "sample" | "beep"
 
   const soundBtn = document.getElementById("soundBtn");
   const soundSel = document.getElementById("soundSel");
-  // UIの選択値と内部状態(soundMode)を初期同期（これが無いと、表示は「ピアノ生音」でも内部はsynthのままになります）
-  if (soundSel && soundSel.value) {
-    soundMode = soundSel.value;
-  }
   const midiWrap = document.getElementById("midiWrap") || {style:{display:"none"}};
   const midiOutSel = document.getElementById("midiOutSel");
   const midiConnBtn = document.getElementById("midiConnBtn");
