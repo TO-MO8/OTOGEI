@@ -635,60 +635,47 @@ const FORCE_SONG_KEY_PC = 0;
   }
 
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
-
   function ensureAudio(){
-    // Keep masterOn in sync with global (UI/other code may toggle window.masterOn)
-    try{
-      if (typeof window.masterOn === "boolean") masterOn = window.masterOn;
-      else window.masterOn = masterOn;
-    }catch(e){}
-    if (!masterOn) return null;
+  if (!masterOn) return null;
+  const Ctor = (window.AudioContext || window.webkitAudioContext);
+  if (!Ctor) return null;
 
-    // Prefer global ensureAudio if present (single AudioContext)
-    let ac = null;
-    try{
-      if (typeof window.ensureAudio === "function") ac = window.ensureAudio();
-    }catch(e){}
-    if (!ac){
-      const Ctor = (window.AudioContext || window.webkitAudioContext);
-      if (!Ctor) return null;
-      if (!audioCtx){
-        try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
-        catch(e){ audioCtx = new Ctor(); }
-      }
-      if (audioCtx.state === "suspended") audioCtx.resume();
-      ac = audioCtx;
-    }
-    audioCtx = ac;
-    try{ window.audioCtx = ac; }catch(e){}
-    return ac;
+  if (!audioCtx){
+    try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
+    catch(e){ audioCtx = new Ctor(); }
   }
-    if (audioCtx.state === "suspended") audioCtx.resume();
-    return audioCtx;
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+
+// --- Audio unlock (重要)
+// Some browsers (especially mobile / strict autoplay policies) require AudioContext
+// to be resumed AND a sound to be started directly from a user gesture.
+let __audioUnlocked = false;
+
+function unlockAudio(){
+  if (__audioUnlocked) return;
+  const ac = ensureAudio();
+  if (!ac) return;
+
+  try{
+    // play a 1-sample silent buffer to "unlock" output
+    const b = ac.createBuffer(1, 1, ac.sampleRate);
+    const s = ac.createBufferSource();
+    s.buffer = b;
+    s.connect(ac.destination);
+    s.start(0);
+    __audioUnlocked = true;
+  }catch(e){
+    // even if this fails, don't hard-stop; user can still try again
   }
-  ;(() => {
-  // --- Audio unlock (重要)
-  ;window.__audioUnlocked = false;
+}
 
+// try unlocking on the earliest gestures
+["pointerdown","touchstart","mousedown","keydown"].forEach(ev=>{
+  window.addEventListener(ev, unlockAudio, { once:true, passive:true });
+});
 
-  function unlockAudio(){
-    if (window.__audioUnlocked) return;
-    const ac = ensureAudio();
-    if (!ac) return;
-    try{
-      const b = ac.createBuffer(1, 1, ac.sampleRate);
-      const s = ac.createBufferSource();
-      s.buffer = b;
-      s.connect(ac.destination);
-      s.start(0);
-      window.__audioUnlocked = true;
-    }catch(e){}
-  }
-
-  ["pointerdown","touchstart","mousedown","keydown"].forEach(ev=>{
-    window.addEventListener(ev, unlockAudio, { once:true, passive:true });
-  });
-})();
 
 
 
