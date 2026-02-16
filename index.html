@@ -961,7 +961,16 @@ function synthPiano(freq, durMs=420, vel=0.9){
 // Place files like: assets/piano/C4.mp3 ... B4.mp3 (or wav/ogg)
 // Sharps: prefer Cs4.mp3 style (avoid '#'), but C#4.* is also supported.
 const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean}
-const EXT_TRY = ["mp3","wav","ogg"];
+const EXT_TRY = ["mp3"];
+const SAMPLE_OCT_MIN = 3; // adjust if your samples start lower
+const SAMPLE_OCT_MAX = 6; // adjust if your samples go higher
+function clampSampleOct(o){
+  o = (o|0);
+  return Math.max(SAMPLE_OCT_MIN, Math.min(SAMPLE_OCT_MAX, o));
+}
+function rateForOct(reqOct, usedOct){
+  return Math.pow(2, (reqOct - usedOct));
+}
 let preloadPromise = null;
 
 // ---- Sample load UI (minimal, does not change left panel layout) ----
@@ -1102,17 +1111,19 @@ function ensurePreload(){
   return ensureSampleReady();
 }
 
-function playBuffer(buf, gain=1.0, durMs=null){
+function playBuffer(buf, gain=1.0, durMs=null, playbackRate=1.0){
   if (!masterOn) return;
   ensureAudio();
   if (!audioCtx || !buf) return;
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
+  try{ src.playbackRate.setValueAtTime(playbackRate, audioCtx.currentTime); }catch(e){ src.playbackRate.value = playbackRate; }
   __trackNode(src);
 
   // If the note should last longer than the sample, loop it (simple sustain).
   // This isn't a perfect piano sustain, but it prevents "cut short" feel.
-  if (Number.isFinite(durMs) && durMs > (buf.duration * 1000)){
+  const effMs = (buf.duration * 1000) / Math.max(0.001, playbackRate);
+  if (Number.isFinite(durMs) && durMs > effMs){
     src.loop = true;
     src.loopStart = 0.02;
     src.loopEnd = Math.max(src.loopStart + 0.05, buf.duration);
@@ -1141,16 +1152,23 @@ async function playSample(note, octave, durMs){
   if (!masterOn) return true;
   try{ ensureAudio(); }catch(e){}
   if (!audioCtx){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
-  const key = `${note}${octave}`;
+
+  // Our repo only has a limited octave range (e.g. 4 octaves). If the game asks for
+  // out-of-range notes like C7, clamp to the nearest available octave and pitch-shift.
+  const reqOct = (octave|0);
+  const useOct = clampSampleOct(reqOct);
+  const rate = rateForOct(reqOct, useOct);
+
+  const key = `${note}${useOct}`;
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
-    playBuffer(cached.buf, 1.0, durMs);
+    playBuffer(cached.buf, 1.0, durMs, rate);
     return true;
   }
   try{
-    const entry = await loadSample(note, octave);
+    const entry = await loadSample(note, useOct);
     if (entry && entry.ok && entry.buf){
-      playBuffer(entry.buf, 1.0, durMs);
+      playBuffer(entry.buf, 1.0, durMs, rate);
       return true;
     }
   }catch(e){/* ignore */}
