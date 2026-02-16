@@ -1095,7 +1095,11 @@ async function preloadAllForOct(oct){
     // we call loadSample with original note names
   }
   for (const n of ALL_NOTES){
-    await loadSample(n, octfunction playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
+    await loadSample(n, oct);
+  }
+}
+
+function playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
   if (!window.masterOn && typeof masterOn !== "undefined" && !masterOn) return;
   try{ ensureAudio(); }catch(e){}
   const ac = window.audioCtx || (typeof audioCtx !== "undefined" ? audioCtx : null);
