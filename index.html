@@ -908,8 +908,24 @@ function synthPiano(freq, durMs=420, vel=0.9){
 const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean}
 const EXT_TRY = ["mp3","wav","ogg"];
 
-  // Resolve asset base from the current page URL (works on GitHub Pages subpaths like /OTOGEI/)
-  const ASSET_BASE = new URL("./", location.href);
+// ---- Asset base resolver (GitHub Pages subdir safe) ----
+// If this HTML is served at https://USER.github.io/OTOGEI/..., relative "assets/..." works.
+// But if it is served at root (https://USER.github.io/) while assets live under /OTOGEI/,
+// we try a fallback project folder. Edit PROJECT_FALLBACK if your repo folder differs.
+const PROJECT_FALLBACK = "OTOGEI";
+const __assetBases = (()=>{
+  const bases = [];
+  try{ bases.push(new URL("./", location.href)); }catch(e){}
+  try{ bases.push(new URL(`/${PROJECT_FALLBACK}/`, location.origin)); }catch(e){}
+  // de-dupe
+  const seen = new Set();
+  return bases.filter(b=>{ const s=String(b); if(seen.has(s)) return false; seen.add(s); return true; });
+})();
+function __mkAssetUrl(relPath){
+  // relPath like "assets/piano/C4.mp3"
+  return __assetBases.map(b => new URL(relPath, b).href);
+}
+
 let preloadPromise = null;
 
 // ---- Sample load UI (minimal, does not change left panel layout) ----
@@ -960,7 +976,7 @@ async function ensureSampleReady(){
 async function fetchAndDecode(url){
   let res = null;
   try{
-    res = await fetch(url, { cache: "force-cache" });
+    res = await fetch(url, { cache: "no-store" });
   }catch(err){
     console.error("[sample fetch] ERROR", { url, err });
     return null;
@@ -1006,17 +1022,19 @@ async function loadSample(note, octave){
 
   for (const ext of EXT_TRY){
     for (const stem of stems){
-      const url = new URL(`assets/piano/${encodeURIComponent(stem)}.${ext}`, ASSET_BASE).href;
-      const buf = await fetchAndDecode(url);
-      if (buf){
-        const entry = { buf, ok:true, url };
-        sampleBufCache.set(key, entry);
-        return entry;
-      }
+const urls = __mkAssetUrl(`assets/piano/${encodeURIComponent(stem)}.${ext}`);
+for (const url of urls){
+  const buf = await fetchAndDecode(url);
+  if (buf){
+    const entry = { buf, ok:true, url };
+    sampleBufCache.set(key, entry);
+    return entry;
+  }
+}
     }
   }
 
-  console.warn("[sample] missing", { note, octave, tried: stems.map(s=>new URL(`assets/piano/${s}.[${EXT_TRY.join("|")}]`, ASSET_BASE).href) });
+  console.warn("[sample] missing", { note, octave, tried: stems.map(s=>`assets/piano/${s}.[${EXT_TRY.join("|")}]`) });
   const entry = { buf:null, ok:false };
   sampleBufCache.set(key, entry);
   return entry;
