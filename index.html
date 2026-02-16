@@ -645,8 +645,18 @@ const FORCE_SONG_KEY_PC = 0;
     catch(e){ audioCtx = new Ctor(); }
   }
   if (audioCtx.state === "suspended") audioCtx.resume();
+      // ---- expose globally (他の処理から参照できるように)
+  window.audioCtx = audioCtx;
+
+  // ---- master gain（全音の出口を1つに統一）
+  if (!window.masterGain) {
+    window.masterGain = audioCtx.createGain();
+    window.masterGain.gain.value = 1.0;
+    window.masterGain.connect(audioCtx.destination);
+  }
+
   return audioCtx;
-}
+  }
 
 // --- Audio unlock (重要)
 // Some browsers (especially mobile / strict autoplay policies) require AudioContext
