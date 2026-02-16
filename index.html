@@ -655,6 +655,7 @@ const FORCE_SONG_KEY_PC = 0;
     const ac = ensureAudio();
     if (!ac) return;
     try{
+      if (ac.state !== "running"){ ac.resume && ac.resume(); }
       // play a 1-sample silent buffer to "unlock" output
       const b = ac.createBuffer(1, 1, ac.sampleRate);
       const s = ac.createBufferSource();
@@ -930,9 +931,8 @@ function synthPiano(freq, durMs=420, vel=0.9){
   // Sample player (WebAudio: low-latency)
 // Place files like: assets/piano/C4.mp3 ... B4.mp3 (or wav/ogg)
 // Sharps: prefer Cs4.mp3 style (avoid '#'), but C#4.* is also supported.
-const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean, baseMidi?:number}
-// Repo assets are mp3 (C4, Cs4, ...). Trying wav/ogg causes lots of 404 noise.
-const EXT_TRY = ["mp3"];
+const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean}
+const EXT_TRY = ["mp3","wav","ogg"];
 let preloadPromise = null;
 
 // ---- Sample load UI (minimal, does not change left panel layout) ----
@@ -956,6 +956,8 @@ function setSampleBusy(busy){
   });
 }
 
+const BASE_SAMPLE_OCT = 4; // we only ship samples for C4..B4 (+ sharps)
+
 async function ensureSampleReady(){
   // Only for sample mode. Never falls back to osc/beep automatically.
   if (soundMode !== "sample") return true;
@@ -969,7 +971,7 @@ async function ensureSampleReady(){
   if (!preloadPromise){
     setSampleBusy(true);
     setAudioStatus("サンプル読み込み中…");
-    preloadPromise = preloadAllForOct(octave)
+    preloadPromise = preloadAllForOct(BASE_SAMPLE_OCT)
       .catch((e)=>{ console.error("[sample preload] ERROR", e); })
       .finally(()=>{ setSampleBusy(false); });
   }
@@ -1020,12 +1022,8 @@ async function fetchAndDecode(url){
   }
 }
 
-// We only ship samples for octave 4 (C4..B4, incl. sharps). Other octaves are pitch-shifted.
-const __PIANO_BASE_OCT = 4;
-
 async function loadSample(note, octave){
-  // cache by pitch-class @ base octave
-  const key = `${note}${__PIANO_BASE_OCT}`;
+  const key = `${note}${octave}`;
   if (sampleBufCache.has(key)) return sampleBufCache.get(key);
 
   // Normalize naming to your repo assets:
@@ -1033,7 +1031,7 @@ async function loadSample(note, octave){
   // - Flats map to enharmonic sharp name (Db -> Cs, etc).
   const flatToSharp = { "Db":"C#", "Eb":"D#", "Gb":"F#", "Ab":"G#", "Bb":"A#" };
   const n2 = flatToSharp[note] || note;
-  const stemSharp = `${n2}${__PIANO_BASE_OCT}`;                 // e.g. C#4
+  const stemSharp = `${n2}${octave}`;                 // e.g. C#4
 const stemS = stemSharp.replace("#", "s");          // e.g. Cs4
 const keyS = key.replace("#", "s");                 // keyもCs4形式に
 const stems = Array.from(new Set([stemS, stemSharp, keyS, key]));
@@ -1047,7 +1045,7 @@ const stems = Array.from(new Set([stemS, stemSharp, keyS, key]));
       const url = `./assets/piano/${encodeURIComponent(stem)}.${ext}`;
       const buf = await fetchAndDecode(url);
       if (buf){
-        const entry = { buf, ok:true, url, baseMidi: midiFromNote(String(note).replace(/s/g,'#'), __PIANO_BASE_OCT) };
+        const entry = { buf, ok:true, url };
         sampleBufCache.set(key, entry);
         return entry;
       }
@@ -1077,16 +1075,17 @@ function ensurePreload(){
   return ensureSampleReady();
 }
 
-function playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
+function playBuffer(buf, playbackRate=1.0, durMs=null, gain=0.95){
   if (!masterOn) return;
   ensureAudio();
   if (!audioCtx || !buf) return;
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
-  try{ src.playbackRate.setValueAtTime(rate, audioCtx.currentTime); }catch(e){}
   __trackNode(src);
 
-  // If the note should last longer than the sample, loop it (simple sustain).
+  
+  try{ src.playbackRate.setValueAtTime(playbackRate, audioCtx.currentTime); }catch(e){}
+// If the note should last longer than the sample, loop it (simple sustain).
   // This isn't a perfect piano sustain, but it prevents "cut short" feel.
   if (Number.isFinite(durMs) && durMs > (buf.duration * 1000)){
     src.loop = true;
@@ -1111,35 +1110,42 @@ function playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
 }
 
 
-async function playSample(note, octave, durMs){
-  // On-demand load for the requested note. Avoid awaiting full-octave preload here.
+function playSampleImmediate(note, octave, durMs){
+  // Gesture-safe: NO await. Plays only if buffer is already cached.
   if (soundMode !== "sample") return false;
   if (!masterOn) return true;
   try{ ensureAudio(); }catch(e){}
   if (!audioCtx){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
-  // Always use base-octave samples and pitch-shift to the requested octave.
-  const key = `${note}${__PIANO_BASE_OCT}`;
-  const targetMidi = midiFromNote(String(note).replace(/s/g,'#'), octave);
-  const cached = sampleBufCache.get(key);
+
+  const baseKey = `${note}${BASE_SAMPLE_OCT}`;
+  const cached = sampleBufCache.get(baseKey);
+  const rate = Math.pow(2, (octave - BASE_SAMPLE_OCT)); // transpose by octaves
+
   if (cached && cached.ok && cached.buf){
-    const baseMidi = cached.baseMidi ?? midiFromNote(String(note).replace(/s/g,'#'), __PIANO_BASE_OCT);
-    const semis = targetMidi - baseMidi;
-    const rate = Math.pow(2, semis/12);
-    playBuffer(cached.buf, 1.0, durMs, rate);
+    playBuffer(cached.buf, rate, durMs, 0.95);
     return true;
   }
+
+  // Not ready yet: kick off load in background (no await), stay silent for this tap.
   try{
-    const entry = await loadSample(note, octave);
-    if (entry && entry.ok && entry.buf){
-      const baseMidi = entry.baseMidi ?? midiFromNote(String(note).replace(/s/g,'#'), __PIANO_BASE_OCT);
-      const semis = targetMidi - baseMidi;
-      const rate = Math.pow(2, semis/12);
-      playBuffer(entry.buf, 1.0, durMs, rate);
-      return true;
+    if (!cached || cached.loading !== true){
+      sampleBufCache.set(baseKey, { ok:false, buf:null, loading:true });
+      loadSample(note, BASE_SAMPLE_OCT)
+        .then((entry)=>{ 
+          if (entry && entry.ok && entry.buf){
+            sampleBufCache.set(baseKey, { ok:true, buf:entry.buf, loading:false });
+          }else{
+            sampleBufCache.set(baseKey, { ok:false, buf:null, loading:false });
+          }
+        })
+        .catch(()=>{ sampleBufCache.set(baseKey, { ok:false, buf:null, loading:false }); });
     }
-  }catch(e){/* ignore */}
-  return false; // caller will fallback
+  }catch(e){}
+
+  setAudioStatus("サンプル読み込み中…（もう一度押すと鳴ります）");
+  return true;
 }
+
 
   // -------------------------
   // Game state
@@ -1584,11 +1590,11 @@ async function playNoteOut(note, durMs){
 
     // Samples (piano). In sample mode, NEVER fall back to oscillator/beep automatically.
     if (soundMode === "sample"){
-      await ensureSampleReady();
-      const ok = await playSample(noteName, useOct, durMs);
+      // IMPORTANT: gesture-safe (no await). Use cached sample; if not loaded yet, preload and ask user to tap again.
+      ensureSampleReady(); // starts preload in background
+      const ok = playSampleImmediate(noteName, useOct, durMs);
       if (ok) return true;
-      // Missing sample -> silent + status (no fallback)
-      setAudioStatus(`サンプルが見つかりません: ${noteName}${useOct}（無音）`);
+      setAudioStatus(`音を有効化してください（🔊 ON）`);
       return true;
     }
 
