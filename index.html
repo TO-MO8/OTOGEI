@@ -651,20 +651,22 @@ const FORCE_SONG_KEY_PC = 0;
     // ★ masterGain もこの瞬間に必ず作る（これが本命）
     window.masterGain = audioCtx.createGain();
     window.masterGain.gain.value = 1.0;
-    window.masterGain.connect(audioCtx.destination);
+    window.masterGain.connect(window.masterGain || audioCtx.destination);
   } else {
     // 既存でも公開だけは保証
     window.audioCtx = audioCtx;
     if (!window.masterGain){
       window.masterGain = audioCtx.createGain();
       window.masterGain.gain.value = 1.0;
-      window.masterGain.connect(audioCtx.destination);
+      window.masterGain.connect(window.masterGain || audioCtx.destination);
     }
   }
 
   if (audioCtx.state === "suspended") audioCtx.resume();
   return audioCtx;
 }
+try{ window.ensureAudio = ensureAudio; }catch(e){}
+
 
 
 
@@ -744,7 +746,7 @@ function unlockAudio(){
     g.gain.setValueAtTime(0.0001, t0);
     g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    o.connect(g).connect(audioCtx.destination);
+    o.connect(g).connect(window.masterGain || audioCtx.destination);
     o.start(t0); o.stop(t0 + dur + 0.03);
   }
 
@@ -848,7 +850,7 @@ function unlockAudio(){
 
     srcNode.buffer = readyBuf;
     srcNode.playbackRate.setValueAtTime(rate, start);
-    srcNode.connect(lp).connect(gain).connect(audioCtx.destination);
+    srcNode.connect(lp).connect(gain).connect(window.masterGain || audioCtx.destination);
     srcNode.start(start);
 
     const intended = Math.max(1.05, durMs/1000 + 0.65);
@@ -944,10 +946,10 @@ function synthPiano(freq, durMs=420, vel=0.9){
 
     mix.connect(lp).connect(g);
 
-    g.connect(dry).connect(audioCtx.destination);
-    g.connect(delay).connect(wet).connect(audioCtx.destination);
+    g.connect(dry).connect(window.masterGain || audioCtx.destination);
+    g.connect(delay).connect(wet).connect(window.masterGain || audioCtx.destination);
 
-    noise.connect(noiseHP).connect(noiseGain).connect(audioCtx.destination);
+    noise.connect(noiseHP).connect(noiseGain).connect(window.masterGain || audioCtx.destination);
 
     // start/stop
     noise.start(t0); noise.stop(t0 + 0.04);
@@ -1120,7 +1122,7 @@ function playBuffer(buf, gain=1.0, durMs=null){
   const now = audioCtx.currentTime;
   g.gain.setValueAtTime(gain, now);
 
-  src.connect(g).connect(audioCtx.destination);
+  src.connect(g).connect(window.masterGain || audioCtx.destination);
   src.start();
 
   if (Number.isFinite(durMs)){
