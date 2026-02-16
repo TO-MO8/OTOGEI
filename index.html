@@ -646,20 +646,13 @@ const FORCE_SONG_KEY_PC = 0;
     if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
-  async function ensureAudioRunning(){
-    const ac = ensureAudio();
-    if (!ac) return null;
-    try{ if (ac.state !== 'running') await ac.resume(); }catch(e){}
-    return ac;
-  }
-
   // --- Audio unlock (重要)
   // Some browsers (especially mobile / strict autoplay policies) require AudioContext
   // to be resumed AND a sound to be started directly from a user gesture.
   let __audioUnlocked = false;
-  async function unlockAudio(){
+  function unlockAudio(){
     if (__audioUnlocked) return;
-    const ac = await ensureAudioRunning();
+    const ac = ensureAudio();
     if (!ac) return;
     try{
       // play a 1-sample silent buffer to "unlock" output
@@ -670,8 +663,7 @@ const FORCE_SONG_KEY_PC = 0;
       s.start(0);
       __audioUnlocked = true;
     }catch(e){
-      // even if this fails, we still try to resume later
-      __audioUnlocked = true;
+      // even if this fails, don't hard-stop; user can still try again
     }
   }
   // try unlocking on the earliest gestures
@@ -938,8 +930,9 @@ function synthPiano(freq, durMs=420, vel=0.9){
   // Sample player (WebAudio: low-latency)
 // Place files like: assets/piano/C4.mp3 ... B4.mp3 (or wav/ogg)
 // Sharps: prefer Cs4.mp3 style (avoid '#'), but C#4.* is also supported.
-const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean}
-const EXT_TRY = ["mp3","wav","ogg"];
+const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean, baseMidi?:number}
+// Repo assets are mp3 (C4, Cs4, ...). Trying wav/ogg causes lots of 404 noise.
+const EXT_TRY = ["mp3"];
 let preloadPromise = null;
 
 // ---- Sample load UI (minimal, does not change left panel layout) ----
@@ -1027,8 +1020,12 @@ async function fetchAndDecode(url){
   }
 }
 
+// We only ship samples for octave 4 (C4..B4, incl. sharps). Other octaves are pitch-shifted.
+const __PIANO_BASE_OCT = 4;
+
 async function loadSample(note, octave){
-  const key = `${note}${octave}`;
+  // cache by pitch-class @ base octave
+  const key = `${note}${__PIANO_BASE_OCT}`;
   if (sampleBufCache.has(key)) return sampleBufCache.get(key);
 
   // Normalize naming to your repo assets:
@@ -1036,7 +1033,7 @@ async function loadSample(note, octave){
   // - Flats map to enharmonic sharp name (Db -> Cs, etc).
   const flatToSharp = { "Db":"C#", "Eb":"D#", "Gb":"F#", "Ab":"G#", "Bb":"A#" };
   const n2 = flatToSharp[note] || note;
-  const stemSharp = `${n2}${octave}`;                 // e.g. C#4
+  const stemSharp = `${n2}${__PIANO_BASE_OCT}`;                 // e.g. C#4
 const stemS = stemSharp.replace("#", "s");          // e.g. Cs4
 const keyS = key.replace("#", "s");                 // keyもCs4形式に
 const stems = Array.from(new Set([stemS, stemSharp, keyS, key]));
@@ -1050,7 +1047,7 @@ const stems = Array.from(new Set([stemS, stemSharp, keyS, key]));
       const url = `./assets/piano/${encodeURIComponent(stem)}.${ext}`;
       const buf = await fetchAndDecode(url);
       if (buf){
-        const entry = { buf, ok:true, url };
+        const entry = { buf, ok:true, url, baseMidi: midiFromNote(String(note).replace(/s/g,'#'), __PIANO_BASE_OCT) };
         sampleBufCache.set(key, entry);
         return entry;
       }
@@ -1080,12 +1077,13 @@ function ensurePreload(){
   return ensureSampleReady();
 }
 
-function playBuffer(buf, gain=1.0, durMs=null){
+function playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
   if (!masterOn) return;
   ensureAudio();
   if (!audioCtx || !buf) return;
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
+  try{ src.playbackRate.setValueAtTime(rate, audioCtx.currentTime); }catch(e){}
   __trackNode(src);
 
   // If the note should last longer than the sample, loop it (simple sustain).
@@ -1119,16 +1117,24 @@ async function playSample(note, octave, durMs){
   if (!masterOn) return true;
   try{ ensureAudio(); }catch(e){}
   if (!audioCtx){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
-  const key = `${note}${octave}`;
+  // Always use base-octave samples and pitch-shift to the requested octave.
+  const key = `${note}${__PIANO_BASE_OCT}`;
+  const targetMidi = midiFromNote(String(note).replace(/s/g,'#'), octave);
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
-    playBuffer(cached.buf, 1.0, durMs);
+    const baseMidi = cached.baseMidi ?? midiFromNote(String(note).replace(/s/g,'#'), __PIANO_BASE_OCT);
+    const semis = targetMidi - baseMidi;
+    const rate = Math.pow(2, semis/12);
+    playBuffer(cached.buf, 1.0, durMs, rate);
     return true;
   }
   try{
     const entry = await loadSample(note, octave);
     if (entry && entry.ok && entry.buf){
-      playBuffer(entry.buf, 1.0, durMs);
+      const baseMidi = entry.baseMidi ?? midiFromNote(String(note).replace(/s/g,'#'), __PIANO_BASE_OCT);
+      const semis = targetMidi - baseMidi;
+      const rate = Math.pow(2, semis/12);
+      playBuffer(entry.buf, 1.0, durMs, rate);
       return true;
     }
   }catch(e){/* ignore */}
@@ -1247,17 +1253,6 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
 
   const keysWrap = document.getElementById("keys");
   const keysSharpWrap = document.getElementById("keysSharp");
-
-  // --- Mobile audio unlock: make sure AudioContext is resumed by a real user gesture
-  let __unlockOnceDone = false;
-  async function __unlockOnce(){
-    if (__unlockOnceDone) return;
-    __unlockOnceDone = true;
-    await unlockAudio();
-    if (soundMode === "sample") { try{ await ensureSampleReady(); }catch(e){} }
-  }
-  document.addEventListener("pointerdown", __unlockOnce, { once:true });
-  document.addEventListener("touchend", __unlockOnce, { once:true });
 
   function layoutSharps(){
     // No-overlap layout uses CSS grid.
@@ -1570,7 +1565,7 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
 async function playNoteOut(note, durMs){
     // returns true if sample used (or sound suppressed)
     if (!masterOn) return true;
-    await unlockAudio();
+    unlockAudio();
 
     const { name: noteName, octave: useOct } = normalizeNoteInput(note, octave);
 
@@ -1623,7 +1618,7 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
       ctl.paused = false;
       ctl.playing = true;
       setState("LISTEN", "warn");
-      await unlockAudio();
+      unlockAudio();
       ensureAudio();
       __answerStep();
       return;
@@ -1640,7 +1635,7 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
 
     playing = true;
     setState("LISTEN", "warn");
-    await unlockAudio();
+    unlockAudio();
     ensureAudio();
 
     // count-in (do not use oscillator in sample mode)
@@ -2129,7 +2124,7 @@ soundBtn.addEventListener("click", async () => {
     masterOn = !masterOn;
     soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
     if (masterOn){
-      await unlockAudio();
+      unlockAudio();
       ensureAudio();
       syncSoundModeFromUI();
       if (soundMode === "sample") await ensureSampleReady();
