@@ -666,32 +666,27 @@ const FORCE_SONG_KEY_PC = 0;
     if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
-  // --- Audio unlock (重要)
-  // Some browsers (especially mobile / strict autoplay policies) require AudioContext
-  // to be resumed AND a sound to be started directly from a user gesture.
-  ;let __audioUnlocked = false;
+ // --- Audio unlock (重要)
+window.__audioUnlocked = false;
 
+function unlockAudio(){
+  if (window.__audioUnlocked) return;
+  const ac = ensureAudio();
+  if (!ac) return;
+  try{
+    const b = ac.createBuffer(1, 1, ac.sampleRate);
+    const s = ac.createBufferSource();
+    s.buffer = b;
+    s.connect(ac.destination);
+    s.start(0);
+    window.__audioUnlocked = true;
+  }catch(e){}
+}
 
-  function unlockAudio(){
-    if (__audioUnlocked) return;
-    const ac = ensureAudio();
-    if (!ac) return;
-    try{
-      // play a 1-sample silent buffer to "unlock" output
-      const b = ac.createBuffer(1, 1, ac.sampleRate);
-      const s = ac.createBufferSource();
-      s.buffer = b;
-      s.connect(ac.destination);
-      s.start(0);
-      __audioUnlocked = true;
-    }catch(e){
-      // even if this fails, don't hard-stop; user can still try again
-    }
-  }
-  // try unlocking on the earliest gestures
-  ["pointerdown","touchstart","mousedown","keydown"].forEach(ev=>{
-    window.addEventListener(ev, unlockAudio, { once:true, passive:true });
-  });
+["pointerdown","touchstart","mousedown","keydown"].forEach(ev=>{
+  window.addEventListener(ev, unlockAudio, { once:true, passive:true });
+});
+
 
 
   function midiFromNote(name, octave){
