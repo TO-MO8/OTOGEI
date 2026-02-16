@@ -673,7 +673,8 @@ function unlockAudio(){
     const b = ac.createBuffer(1, 1, ac.sampleRate);
     const s = ac.createBufferSource();
     s.buffer = b;
-    s.connect(ac.destination);
+    s.connect(window.masterGain || ac.destination);
+
     s.start(0);
     __audioUnlocked = true;
   }catch(e){
