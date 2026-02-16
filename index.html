@@ -651,14 +651,14 @@ const FORCE_SONG_KEY_PC = 0;
     // ★ masterGain もこの瞬間に必ず作る（これが本命）
     window.masterGain = audioCtx.createGain();
     window.masterGain.gain.value = 1.0;
-    window.masterGain.connect(window.masterGain || audioCtx.destination);
+    window.masterGain.connect(audioCtx.destination);
   } else {
     // 既存でも公開だけは保証
     window.audioCtx = audioCtx;
     if (!window.masterGain){
       window.masterGain = audioCtx.createGain();
       window.masterGain.gain.value = 1.0;
-      window.masterGain.connect(window.masterGain || audioCtx.destination);
+      window.masterGain.connect(audioCtx.destination);
     }
   }
 
