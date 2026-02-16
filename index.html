@@ -646,13 +646,20 @@ const FORCE_SONG_KEY_PC = 0;
     if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
+  async function ensureAudioRunning(){
+    const ac = ensureAudio();
+    if (!ac) return null;
+    try{ if (ac.state !== 'running') await ac.resume(); }catch(e){}
+    return ac;
+  }
+
   // --- Audio unlock (重要)
   // Some browsers (especially mobile / strict autoplay policies) require AudioContext
   // to be resumed AND a sound to be started directly from a user gesture.
   let __audioUnlocked = false;
-  function unlockAudio(){
+  async function unlockAudio(){
     if (__audioUnlocked) return;
-    const ac = ensureAudio();
+    const ac = await ensureAudioRunning();
     if (!ac) return;
     try{
       // play a 1-sample silent buffer to "unlock" output
@@ -663,7 +670,8 @@ const FORCE_SONG_KEY_PC = 0;
       s.start(0);
       __audioUnlocked = true;
     }catch(e){
-      // even if this fails, don't hard-stop; user can still try again
+      // even if this fails, we still try to resume later
+      __audioUnlocked = true;
     }
   }
   // try unlocking on the earliest gestures
@@ -1240,6 +1248,17 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
   const keysWrap = document.getElementById("keys");
   const keysSharpWrap = document.getElementById("keysSharp");
 
+  // --- Mobile audio unlock: make sure AudioContext is resumed by a real user gesture
+  let __unlockOnceDone = false;
+  async function __unlockOnce(){
+    if (__unlockOnceDone) return;
+    __unlockOnceDone = true;
+    await unlockAudio();
+    if (soundMode === "sample") { try{ await ensureSampleReady(); }catch(e){} }
+  }
+  document.addEventListener("pointerdown", __unlockOnce, { once:true });
+  document.addEventListener("touchend", __unlockOnce, { once:true });
+
   function layoutSharps(){
     // No-overlap layout uses CSS grid.
     // (Older versions positioned sharps absolutely. That made them "fly away" on some screens.)
@@ -1551,7 +1570,7 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
 async function playNoteOut(note, durMs){
     // returns true if sample used (or sound suppressed)
     if (!masterOn) return true;
-    unlockAudio();
+    await unlockAudio();
 
     const { name: noteName, octave: useOct } = normalizeNoteInput(note, octave);
 
@@ -1604,7 +1623,7 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
       ctl.paused = false;
       ctl.playing = true;
       setState("LISTEN", "warn");
-      unlockAudio();
+      await unlockAudio();
       ensureAudio();
       __answerStep();
       return;
@@ -1621,7 +1640,7 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
 
     playing = true;
     setState("LISTEN", "warn");
-    unlockAudio();
+    await unlockAudio();
     ensureAudio();
 
     // count-in (do not use oscillator in sample mode)
@@ -2110,7 +2129,7 @@ soundBtn.addEventListener("click", async () => {
     masterOn = !masterOn;
     soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
     if (masterOn){
-      unlockAudio();
+      await unlockAudio();
       ensureAudio();
       syncSoundModeFromUI();
       if (soundMode === "sample") await ensureSampleReady();
@@ -3110,29 +3129,43 @@ useBtn.addEventListener("click", () => {
 
 
   // --- Audio unlock helpers (fix "no sound" on some browsers) ---
-  // NOTE: Do NOT play an audible oscillator here.
-  // Some mobile browsers require a user-gesture-triggered AudioContext start.
-  // We unlock with a 1-sample silent buffer so「ピアノ生音」時にシンセ音が混ざらない。
-  function __unlockSilent(){
+  function __unlockPing(){
     const ctx = (window.ensureAudio ? window.ensureAudio() : null);
     if (!ctx) return;
     try{
-      const b = ctx.createBuffer(1, 1, ctx.sampleRate);
-      const s = ctx.createBufferSource();
-      s.buffer = b;
-      s.connect(ctx.destination);
-      s.start(0);
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(880, ctx.currentTime);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+      o.connect(g).connect(ctx.destination);
+      o.start();
+      o.stop(ctx.currentTime + 0.13);
     }catch(e){}
   }
 
-  // Button unlock (silent)
+  // Button unlock
   document.getElementById("unlockBtn")?.addEventListener("click", () => {
-    __unlockSilent();
+    __unlockPing();
     try{ setState("AUDIO OK","good"); }catch(e){}
-  });
+});
 
-  // First user gesture unlock (one-time, silent)
-  window.addEventListener("pointerdown", () => { __unlockSilent(); }, { once:true, passive:true });
+  // Cコード化（再生のみ移調。表示オクターブ/鍵盤には影響しない）
+  const __toCSwitch = document.getElementById("toCSwitch");
+  if (__toCSwitch){
+    __toCSwitch.addEventListener("change", ()=>{
+      __transposeToC = !!__toCSwitch.checked;
+      __updateKeyBox();
+    });
+  }
+  __updateKeyBox();
+
+  // First user gesture unlock (one-time)
+  window.addEventListener("pointerdown", () => {
+    __unlockPing();
+  }, { once:true, passive:true });
   // --- end unlock helpers ---
 
 </script>
