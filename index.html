@@ -464,12 +464,10 @@ const FORCE_SONG_KEY_PC = 0;
   // Audio: Samples (piano) + fallback beeps
   // -------------------------
   let audioCtx = null;
-  let masterOn = true;
+  let masterOn = (typeof window.masterOn==="boolean") ? window.masterOn : true;
+  try{ window.masterOn = masterOn; }catch(e){}
 
-  
-  // keep masterOn synced with global toggle
-  masterOn = (typeof window.masterOn==='boolean') ? window.masterOn : masterOn;
-// ---- Active audio nodes (for stopping overlapping preview/playback) ----
+  // ---- Active audio nodes (for stopping overlapping preview/playback) ----
   const __activeAudio = new Set();
   function __trackNode(node){
     if (!node) return node;
@@ -639,16 +637,32 @@ const FORCE_SONG_KEY_PC = 0;
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
 
   function ensureAudio(){
-    masterOn = (typeof window.masterOn==='boolean') ? window.masterOn : masterOn;
+    // Keep masterOn in sync with global (UI/other code may toggle window.masterOn)
+    try{
+      if (typeof window.masterOn === "boolean") masterOn = window.masterOn;
+      else window.masterOn = masterOn;
+    }catch(e){}
     if (!masterOn) return null;
-    // Prefer shared/global AudioContext to avoid desync
-    if (window.ensureAudio){ const ac = window.ensureAudio(); if (ac) { audioCtx = ac; return audioCtx; } }
-    const Ctor = (window.AudioContext || window.webkitAudioContext);
-    if (!Ctor) return null;
-    if (!audioCtx){
-      try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
-      catch(e){ audioCtx = new Ctor(); }
+
+    // Prefer global ensureAudio if present (single AudioContext)
+    let ac = null;
+    try{
+      if (typeof window.ensureAudio === "function") ac = window.ensureAudio();
+    }catch(e){}
+    if (!ac){
+      const Ctor = (window.AudioContext || window.webkitAudioContext);
+      if (!Ctor) return null;
+      if (!audioCtx){
+        try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
+        catch(e){ audioCtx = new Ctor(); }
+      }
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      ac = audioCtx;
     }
+    audioCtx = ac;
+    try{ window.audioCtx = ac; }catch(e){}
+    return ac;
+  }
     if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
@@ -1223,7 +1237,9 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
   const quizBarsEl = document.getElementById("quizBars");
   const quizNowBarEl = document.getElementById("quizNowBar");
 
-  // init bar length UI
+  // init
+  try{ soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF"; }catch(e){}
+ bar length UI
   if (barRange) barRange.value = String(barsLen);
   if (barV) barV.textContent = String(barsLen);
 
@@ -1556,7 +1572,6 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
 
 async function playNoteOut(note, durMs){
     // returns true if sample used (or sound suppressed)
-    masterOn = (typeof window.masterOn==='boolean') ? window.masterOn : masterOn;
     if (!masterOn) return true;
     unlockAudio();
 
@@ -2115,6 +2130,7 @@ noLimit.addEventListener("change", () => {
 
 soundBtn.addEventListener("click", async () => {
     masterOn = !masterOn;
+    try{ window.masterOn = masterOn; }catch(e){}
     soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
     if (masterOn){
       unlockAudio();
