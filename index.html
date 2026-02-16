@@ -1252,19 +1252,22 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
 
   const keyEls = [...document.querySelectorAll(".key")];
   // --- FIX: attach handlers to on-screen piano keys (mouse/touch) ---
-  // Some builds accidentally lost these listeners, causing key clicks to be silent.
+  // Keys use data-note like "C","D"... (no octave). For sound feedback we force a safe octave that exists in your samples.
+  const FEEDBACK_OCTAVE = 4;
   keyEls.forEach(el => {
     const handler = (ev) => {
-      try{ ev.preventDefault(); ev.stopPropagation(); }catch(e){}
-      const n = el.dataset && el.dataset.note ? el.dataset.note : null;
+      try{ ev.preventDefault(); }catch(e){}
+      const n = (el.dataset && el.dataset.note) ? el.dataset.note : null;
       if (!n) return;
+      // Ensure audio is resumed and samples are prepared (non-blocking)
+      try{ unlockAudio(); ensureAudio(); ensurePreload(); }catch(e){}
       try{ onPressNote(n); }catch(e){ console.error("[key press] onPressNote failed", e); }
     };
-    // pointerdown for immediate response, click as fallback
     el.addEventListener("pointerdown", handler, { passive:false });
     el.addEventListener("click", handler);
   });
   // --- /FIX ---
+
 
 
   function setState(text, kind="warn"){
@@ -1864,7 +1867,8 @@ else if (allOkOrBetter) grade = "OK";
   async function onPressNote(note){
     ensureAudio();
     // feedback sound
-    window.playNoteOut(note, 160);
+    // feedback sound: force a stable octave for UI key presses
+    window.playNoteOut(`${note}${FEEDBACK_OCTAVE}`, 160);
 
     if (!answer.length){
       msgEl.textContent = "まず「問題出す」を押してね。";
