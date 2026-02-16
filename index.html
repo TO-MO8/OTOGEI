@@ -666,26 +666,29 @@ const FORCE_SONG_KEY_PC = 0;
     if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
- // --- Audio unlock (重要)
-window.__audioUnlocked = false;
+  ;(() => {
+  // --- Audio unlock (重要)
+  ;window.__audioUnlocked = false;
 
-function unlockAudio(){
-  if (window.__audioUnlocked) return;
-  const ac = ensureAudio();
-  if (!ac) return;
-  try{
-    const b = ac.createBuffer(1, 1, ac.sampleRate);
-    const s = ac.createBufferSource();
-    s.buffer = b;
-    s.connect(ac.destination);
-    s.start(0);
-    window.__audioUnlocked = true;
-  }catch(e){}
-}
 
-["pointerdown","touchstart","mousedown","keydown"].forEach(ev=>{
-  window.addEventListener(ev, unlockAudio, { once:true, passive:true });
-});
+  function unlockAudio(){
+    if (window.__audioUnlocked) return;
+    const ac = ensureAudio();
+    if (!ac) return;
+    try{
+      const b = ac.createBuffer(1, 1, ac.sampleRate);
+      const s = ac.createBufferSource();
+      s.buffer = b;
+      s.connect(ac.destination);
+      s.start(0);
+      window.__audioUnlocked = true;
+    }catch(e){}
+  }
+
+  ["pointerdown","touchstart","mousedown","keydown"].forEach(ev=>{
+    window.addEventListener(ev, unlockAudio, { once:true, passive:true });
+  });
+})();
 
 
 
