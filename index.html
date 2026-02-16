@@ -669,7 +669,8 @@ const FORCE_SONG_KEY_PC = 0;
   // --- Audio unlock (重要)
   // Some browsers (especially mobile / strict autoplay policies) require AudioContext
   // to be resumed AND a sound to be started directly from a user gesture.
-  let __audioUnlocked = false;
+  ;let __audioUnlocked = false;
+
 
   function unlockAudio(){
     if (__audioUnlocked) return;
