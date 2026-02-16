@@ -635,28 +635,30 @@ const FORCE_SONG_KEY_PC = 0;
   }
 
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
-  function ensureAudio(){
-  if (!masterOn) return null;
+ function ensureAudio(){
+  if (!window.masterOn) return null;
+
   const Ctor = (window.AudioContext || window.webkitAudioContext);
   if (!Ctor) return null;
 
-  if (!audioCtx){
-    try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
-    catch(e){ audioCtx = new Ctor(); }
+  if (!window.audioCtx){
+    try{ window.audioCtx = new Ctor({ latencyHint: "interactive" }); }
+    catch(e){ window.audioCtx = new Ctor(); }
   }
-  if (audioCtx.state === "suspended") audioCtx.resume();
-      // ---- expose globally (他の処理から参照できるように)
-  window.audioCtx = audioCtx;
 
-  // ---- master gain（全音の出口を1つに統一）
-  if (!window.masterGain) {
-    window.masterGain = audioCtx.createGain();
+  const ac = window.audioCtx;
+  if (ac.state === "suspended") ac.resume();
+
+  // ★ ここが今回の本命：masterGain を必ず作る
+  if (!window.masterGain){
+    window.masterGain = ac.createGain();
     window.masterGain.gain.value = 1.0;
-    window.masterGain.connect(audioCtx.destination);
+    window.masterGain.connect(ac.destination);
   }
 
-  return audioCtx;
-  }
+  return ac;
+}
+
 
 // --- Audio unlock (重要)
 // Some browsers (especially mobile / strict autoplay policies) require AudioContext
