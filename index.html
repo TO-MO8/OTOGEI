@@ -665,8 +665,6 @@ const FORCE_SONG_KEY_PC = 0;
   if (audioCtx.state === "suspended") audioCtx.resume();
   return audioCtx;
 }
-try{ window.ensureAudio = ensureAudio; }catch(e){}
-
 
 
 
@@ -746,7 +744,7 @@ function unlockAudio(){
     g.gain.setValueAtTime(0.0001, t0);
     g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    o.connect(g).connect(window.masterGain || audioCtx.destination);
+    o.connect(g).connect(audioCtx.destination);
     o.start(t0); o.stop(t0 + dur + 0.03);
   }
 
@@ -850,7 +848,7 @@ function unlockAudio(){
 
     srcNode.buffer = readyBuf;
     srcNode.playbackRate.setValueAtTime(rate, start);
-    srcNode.connect(lp).connect(gain).connect(window.masterGain || audioCtx.destination);
+    srcNode.connect(lp).connect(gain).connect(audioCtx.destination);
     srcNode.start(start);
 
     const intended = Math.max(1.05, durMs/1000 + 0.65);
@@ -946,10 +944,10 @@ function synthPiano(freq, durMs=420, vel=0.9){
 
     mix.connect(lp).connect(g);
 
-    g.connect(dry).connect(window.masterGain || audioCtx.destination);
-    g.connect(delay).connect(wet).connect(window.masterGain || audioCtx.destination);
+    g.connect(dry).connect(audioCtx.destination);
+    g.connect(delay).connect(wet).connect(audioCtx.destination);
 
-    noise.connect(noiseHP).connect(noiseGain).connect(window.masterGain || audioCtx.destination);
+    noise.connect(noiseHP).connect(noiseGain).connect(audioCtx.destination);
 
     // start/stop
     noise.start(t0); noise.stop(t0 + 0.04);
@@ -962,16 +960,11 @@ function synthPiano(freq, durMs=420, vel=0.9){
 // Sharps: prefer Cs4.mp3 style (avoid '#'), but C#4.* is also supported.
 const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean}
 const EXT_TRY = ["mp3"];
-const SAMPLE_OCT_MIN = 3; // adjust if your samples start lower
-const SAMPLE_OCT_MAX = 6; // adjust if your samples go higher
-function clampSampleOct(o){
-  o = (o|0);
-  return Math.max(SAMPLE_OCT_MIN, Math.min(SAMPLE_OCT_MAX, o));
-}
-function rateForOct(reqOct, usedOct){
-  return Math.pow(2, (reqOct - usedOct));
-}
 let preloadPromise = null;
+// Sample octave range available in assets (C3.mp3 ~ B6.mp3)
+const SAMPLE_OCT_MIN = 3;
+const SAMPLE_OCT_MAX = 6;
+
 
 // ---- Sample load UI (minimal, does not change left panel layout) ----
 function setAudioStatus(msg, tone="info"){
@@ -997,7 +990,7 @@ function setSampleBusy(busy){
 async function ensureSampleReady(){
   // Only for sample mode. Never falls back to osc/beep automatically.
   if (soundMode !== "sample") return true;
-  if (!masterOn) return true; // muted by user
+  if (typeof window.masterOn === "boolean" ? !window.masterOn : (!masterOn)) return true; // muted by user
   try{ ensureAudio(); }catch(e){}
   if (!audioCtx){
     setAudioStatus("音を有効化してください（🔊 ON）");
@@ -1102,73 +1095,84 @@ async function preloadAllForOct(oct){
     // we call loadSample with original note names
   }
   for (const n of ALL_NOTES){
-    await loadSample(n, oct);
-  }
-}
+    await loadSample(n, octfunction playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
+  if (!window.masterOn && typeof masterOn !== "undefined" && !masterOn) return;
+  try{ ensureAudio(); }catch(e){}
+  const ac = window.audioCtx || (typeof audioCtx !== "undefined" ? audioCtx : null);
+  if (!ac || !buf) return;
 
-function ensurePreload(){
-  // Backward compatible wrapper
-  return ensureSampleReady();
-}
-
-function playBuffer(buf, gain=1.0, durMs=null, playbackRate=1.0){
-  if (!masterOn) return;
-  ensureAudio();
-  if (!audioCtx || !buf) return;
-  const src = audioCtx.createBufferSource();
+  const src = ac.createBufferSource();
   src.buffer = buf;
-  try{ src.playbackRate.setValueAtTime(playbackRate, audioCtx.currentTime); }catch(e){ src.playbackRate.value = playbackRate; }
+  if (Number.isFinite(rate) && rate > 0) src.playbackRate.value = rate;
   __trackNode(src);
 
   // If the note should last longer than the sample, loop it (simple sustain).
-  // This isn't a perfect piano sustain, but it prevents "cut short" feel.
-  const effMs = (buf.duration * 1000) / Math.max(0.001, playbackRate);
-  if (Number.isFinite(durMs) && durMs > effMs){
+  if (Number.isFinite(durMs) && durMs > (buf.duration * 1000)){
     src.loop = true;
     src.loopStart = 0.02;
     src.loopEnd = Math.max(src.loopStart + 0.05, buf.duration);
   }
 
-  const g = audioCtx.createGain();
-  const now = audioCtx.currentTime;
+  const g = ac.createGain();
+  const now = ac.currentTime;
   g.gain.setValueAtTime(gain, now);
 
-  src.connect(g).connect(window.masterGain || audioCtx.destination);
-  src.start();
+  const out = window.masterGain || ac.destination;
+  src.connect(g).connect(out);
 
+  // If durMs given, schedule stop + tiny release
   if (Number.isFinite(durMs)){
-    const endAt = now + Math.max(0.02, durMs/1000);
-    // tiny release to avoid clicks
-    g.gain.setValueAtTime(gain, Math.max(now, endAt - 0.03));
-    g.gain.exponentialRampToValueAtTime(0.0001, endAt);
-    try{ src.stop(endAt + 0.005); }catch(e){}
-  }
-}
-
-
-async function playSample(note, octave, durMs){
-  // On-demand load for the requested note. Avoid awaiting full-octave preload here.
+    const endAt = now + (durMs/1000);
+    try{ srcasync function playSample(note, octave, durMs){
+  // On-demand load for the requested note.
   if (soundMode !== "sample") return false;
-  if (!masterOn) return true;
+  if (typeof window.masterOn === "boolean" ? !window.masterOn : (typeof masterOn !== "undefined" && !masterOn)) return true;
+
   try{ ensureAudio(); }catch(e){}
-  if (!audioCtx){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
+  const ac = window.audioCtx || (typeof audioCtx !== "undefined" ? audioCtx : null);
+  if (!ac){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
 
-  // Our repo only has a limited octave range (e.g. 4 octaves). If the game asks for
-  // out-of-range notes like C7, clamp to the nearest available octave and pitch-shift.
-  const reqOct = (octave|0);
-  const useOct = clampSampleOct(reqOct);
-  const rate = rateForOct(reqOct, useOct);
+  const targetOct = octave;
+  const srcOct = Math.max(SAMPLE_OCT_MIN, Math.min(SAMPLE_OCT_MAX, targetOct));
+  const rate = Math.pow(2, (targetOct - srcOct)); // octave shift
 
-  const key = `${note}${useOct}`;
+  // cache key is requested octave, but we may reuse a nearby octave buffer
+  const key = `${note}${targetOct}`;
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
-    playBuffer(cached.buf, 1.0, durMs, rate);
+    playBuffer(cached.buf, 1.0, durMs, cached.rate || 1.0);
+    return true;
+  }
+
+  // load buffer for srcOct
+  try{
+    const baseKey = `${note}${srcOct}`;
+    let base = sampleBufCache.get(baseKey);
+    if (!base || !base.ok || !base.buf){
+      base = await loadSample(note, srcOct);
+    }
+    if (base && base.ok && base.buf){
+      // store derived entry for target octave
+      const entry = { buf: base.buf, ok:true, rate };
+      sampleBufCache.set(key, entry);
+      playBuffer(base.buf, 1.0, durMs, rate);
+      return true;
+    }
+  }catch(e){/* ignore */}
+
+  return false; // caller will fallback
+}
+
+note}${octave}`;
+  const cached = sampleBufCache.get(key);
+  if (cached && cached.ok && cached.buf){
+    playBuffer(cached.buf, 1.0, durMs);
     return true;
   }
   try{
-    const entry = await loadSample(note, useOct);
+    const entry = await loadSample(note, octave);
     if (entry && entry.ok && entry.buf){
-      playBuffer(entry.buf, 1.0, durMs, rate);
+      playBuffer(entry.buf, 1.0, durMs);
       return true;
     }
   }catch(e){/* ignore */}
