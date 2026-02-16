@@ -960,11 +960,10 @@ function synthPiano(freq, durMs=420, vel=0.9){
 // Sharps: prefer Cs4.mp3 style (avoid '#'), but C#4.* is also supported.
 const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean}
 const EXT_TRY = ["mp3"];
-let preloadPromise = null;
-// Sample octave range available in assets (C3.mp3 ~ B6.mp3)
 const SAMPLE_OCT_MIN = 3;
 const SAMPLE_OCT_MAX = 6;
 
+let preloadPromise = null;
 
 // ---- Sample load UI (minimal, does not change left panel layout) ----
 function setAudioStatus(msg, tone="info"){
@@ -990,7 +989,7 @@ function setSampleBusy(busy){
 async function ensureSampleReady(){
   // Only for sample mode. Never falls back to osc/beep automatically.
   if (soundMode !== "sample") return true;
-  if (typeof window.masterOn === "boolean" ? !window.masterOn : (!masterOn)) return true; // muted by user
+  if (!masterOn) return true; // muted by user
   try{ ensureAudio(); }catch(e){}
   if (!audioCtx){
     setAudioStatus("音を有効化してください（🔊 ON）");
@@ -1099,87 +1098,69 @@ async function preloadAllForOct(oct){
   }
 }
 
-function playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
-  if (!window.masterOn && typeof masterOn !== "undefined" && !masterOn) return;
-  try{ ensureAudio(); }catch(e){}
-  const ac = window.audioCtx || (typeof audioCtx !== "undefined" ? audioCtx : null);
-  if (!ac || !buf) return;
+function ensurePreload(){
+  // Backward compatible wrapper
+  return ensureSampleReady();
+}
 
-  const src = ac.createBufferSource();
+function playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
+  if (!masterOn) return;
+  ensureAudio();
+  if (!audioCtx || !buf) return;
+  const src = audioCtx.createBufferSource();
   src.buffer = buf;
-  if (Number.isFinite(rate) && rate > 0) src.playbackRate.value = rate;
+  try{ src.playbackRate.value = rate; }catch(e){}
   __trackNode(src);
 
   // If the note should last longer than the sample, loop it (simple sustain).
+  // This isn't a perfect piano sustain, but it prevents "cut short" feel.
   if (Number.isFinite(durMs) && durMs > (buf.duration * 1000)){
     src.loop = true;
     src.loopStart = 0.02;
     src.loopEnd = Math.max(src.loopStart + 0.05, buf.duration);
   }
 
-  const g = ac.createGain();
-  const now = ac.currentTime;
+  const g = audioCtx.createGain();
+  const now = audioCtx.currentTime;
   g.gain.setValueAtTime(gain, now);
 
-  const out = window.masterGain || ac.destination;
-  src.connect(g).connect(out);
+  src.connect(g).connect(audioCtx.destination);
+  src.start();
 
-  // If durMs given, schedule stop + tiny release
   if (Number.isFinite(durMs)){
-    const endAt = now + (durMs/1000);
-    try{ srcasync function playSample(note, octave, durMs){
-  // On-demand load for the requested note.
-  if (soundMode !== "sample") return false;
-  if (typeof window.masterOn === "boolean" ? !window.masterOn : (typeof masterOn !== "undefined" && !masterOn)) return true;
-
-  try{ ensureAudio(); }catch(e){}
-  const ac = window.audioCtx || (typeof audioCtx !== "undefined" ? audioCtx : null);
-  if (!ac){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
-
-  const targetOct = octave;
-  const srcOct = Math.max(SAMPLE_OCT_MIN, Math.min(SAMPLE_OCT_MAX, targetOct));
-  const rate = Math.pow(2, (targetOct - srcOct)); // octave shift
-
-  // cache key is requested octave, but we may reuse a nearby octave buffer
-  const key = `${note}${targetOct}`;
-  const cached = sampleBufCache.get(key);
-  if (cached && cached.ok && cached.buf){
-    playBuffer(cached.buf, 1.0, durMs, cached.rate || 1.0);
-    return true;
+    const endAt = now + Math.max(0.02, durMs/1000);
+    // tiny release to avoid clicks
+    g.gain.setValueAtTime(gain, Math.max(now, endAt - 0.03));
+    g.gain.exponentialRampToValueAtTime(0.0001, endAt);
+    try{ src.stop(endAt + 0.005); }catch(e){}
   }
-
-  // load buffer for srcOct
-  try{
-    const baseKey = `${note}${srcOct}`;
-    let base = sampleBufCache.get(baseKey);
-    if (!base || !base.ok || !base.buf){
-      base = await loadSample(note, srcOct);
-    }
-    if (base && base.ok && base.buf){
-      // store derived entry for target octave
-      const entry = { buf: base.buf, ok:true, rate };
-      sampleBufCache.set(key, entry);
-      playBuffer(base.buf, 1.0, durMs, rate);
-      return true;
-    }
-  }catch(e){/* ignore */}
-
-  return false; // caller will fallback
 }
 
-note}${octave}`;
+
+async function playSample(note, octave, durMs){
+  // Sample playback. Supports C3..B6 assets; higher/lower octaves are pitch-shifted.
+  if (soundMode !== "sample") return false;
+  if (!masterOn) return true;
+  try{ ensureAudio(); }catch(e){}
+  if (!audioCtx){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
+
+  const reqOct = Number(octave)||4;
+  const useOct = Math.min(SAMPLE_OCT_MAX, Math.max(SAMPLE_OCT_MIN, reqOct));
+  const rate = Math.pow(2, (reqOct - useOct));
+
+  const key = `${note}${useOct}`;
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
-    playBuffer(cached.buf, 1.0, durMs);
+    playBuffer(cached.buf, 1.0, durMs, rate);
     return true;
   }
   try{
-    const entry = await loadSample(note, octave);
+    const entry = await loadSample(note, useOct);
     if (entry && entry.ok && entry.buf){
-      playBuffer(entry.buf, 1.0, durMs);
+      playBuffer(entry.buf, 1.0, durMs, rate);
       return true;
     }
-  }catch(e){/* ignore */}
+  }catch(e){ /* ignore */ }
   return false; // caller will fallback
 }
 
