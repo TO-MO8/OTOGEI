@@ -636,7 +636,8 @@ const FORCE_SONG_KEY_PC = 0;
 
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
  function ensureAudio(){
-  if (!masterOn) return null;
+  if (!window.masterOn) return null;
+
   const Ctor = (window.AudioContext || window.webkitAudioContext);
   if (!Ctor) return null;
 
@@ -1634,6 +1635,8 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
       ctl.playing = true;
       setState("LISTEN", "warn");
       unlockAudio();
+      console.log("[ensureAudio] called, masterOn=", window.masterOn);
+
       ensureAudio();
       __answerStep();
       return;
