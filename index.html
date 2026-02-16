@@ -463,12 +463,8 @@ const FORCE_SONG_KEY_PC = 0;
   // -------------------------
   // Audio: Samples (piano) + fallback beeps
   // -------------------------
-  // IMPORTANT:
-  // Use the *global* audio context + master flag (window.audioCtx / window.masterOn)
-  // so Console tests and in-app playback always share the same AudioContext.
-  // (Previously a second local AudioContext/master flag could exist, causing "fetch/decode OK" but no in-game sound.)
-  let audioCtx = window.audioCtx || null;
-  let masterOn = (typeof window.masterOn === "boolean") ? window.masterOn : true;
+  let audioCtx = null;
+  let masterOn = true;
 
   // ---- Active audio nodes (for stopping overlapping preview/playback) ----
   const __activeAudio = new Set();
@@ -640,10 +636,14 @@ const FORCE_SONG_KEY_PC = 0;
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
 
   function ensureAudio(){
-    // delegate to global bootstrap and keep local alias in sync
-    const ctx = window.ensureAudio ? window.ensureAudio() : null;
-    audioCtx = window.audioCtx || ctx || audioCtx;
-    masterOn = (typeof window.masterOn === "boolean") ? window.masterOn : masterOn;
+    if (!masterOn) return null;
+    const Ctor = (window.AudioContext || window.webkitAudioContext);
+    if (!Ctor) return null;
+    if (!audioCtx){
+      try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
+      catch(e){ audioCtx = new Ctor(); }
+    }
+    if (audioCtx.state === "suspended") audioCtx.resume();
     return audioCtx;
   }
 
@@ -947,7 +947,9 @@ async function ensureSampleReady(){
       .catch((e)=>{ console.error("[sample preload] ERROR", e); })
       .finally(()=>{ setSampleBusy(false); });
   }
-  await preloadPromise;
+  // Do not await full preload here; it can stall playback if any request hangs.
+  // Samples will still load on-demand per note via playSample/loadSample.
+  
   // If nothing loaded, warn but stay silent
   // (We cannot easily count here; loadSample logs failures)
   setAudioStatus(""); 
@@ -956,12 +958,17 @@ async function ensureSampleReady(){
 
 async function fetchAndDecode(url){
   let res = null;
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>{ try{ ctrl.abort(); }catch(e){} }, 8000);
   try{
-    res = await fetch(url, { cache: "force-cache" });
+    // Use no-store to avoid weird cached/opaque responses and stale layers
+    res = await fetch(url, { cache: "no-store", signal: ctrl.signal });
   }catch(err){
+    clearTimeout(t);
     console.error("[sample fetch] ERROR", { url, err });
     return null;
   }
+  clearTimeout(t);
   if (!res || !res.ok){
     console.error("[sample fetch] FAIL", { url, status: res ? res.status : "no-response", statusText: res ? res.statusText : "" });
     return null;
@@ -1070,8 +1077,11 @@ function playBuffer(buf, gain=1.0, durMs=null){
 
 
 async function playSample(note, octave, durMs){
-  // Fully await loading the sample so the *first* note is also a real sample.
-  await ensureSampleReady();
+  // On-demand load for the requested note. Avoid awaiting full-octave preload here.
+  if (soundMode !== "sample") return false;
+  if (!masterOn) return true;
+  try{ ensureAudio(); }catch(e){}
+  if (!audioCtx){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
   const key = `${note}${octave}`;
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
@@ -2064,9 +2074,8 @@ noLimit.addEventListener("change", () => {
   }
 });
 
-  soundBtn.addEventListener("click", async () => {
+soundBtn.addEventListener("click", async () => {
     masterOn = !masterOn;
-    window.masterOn = masterOn; // sync global
     soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
     if (masterOn){
       ensureAudio();
