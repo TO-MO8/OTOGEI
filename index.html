@@ -636,39 +636,35 @@ const FORCE_SONG_KEY_PC = 0;
 
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
  function ensureAudio(){
-  // --- ensure masterGain exists (global)
-(function(){
-  const ac = window.audioCtx || audioCtx;   // どっちかに居る想定
-  if (!ac) return;
-  if (!window.masterGain){
-    window.masterGain = ac.createGain();
-    window.masterGain.gain.value = 1.0;
-    window.masterGain.connect(ac.destination);
-  }
-})();
- 
-  if (!window.masterOn) return null;
-
+  if (!masterOn) return null;
   const Ctor = (window.AudioContext || window.webkitAudioContext);
   if (!Ctor) return null;
 
-  if (!window.audioCtx){
-    try{ window.audioCtx = new Ctor({ latencyHint: "interactive" }); }
-    catch(e){ window.audioCtx = new Ctor(); }
-  }
+  if (!audioCtx){
+    try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
+    catch(e){ audioCtx = new Ctor(); }
 
-  const ac = window.audioCtx;
-  if (ac.state === "suspended") ac.resume();
+    // ★ audioCtx を作った瞬間に公開
+    window.audioCtx = audioCtx;
 
-  // ★ ここが今回の本命：masterGain を必ず作る
-  if (!window.masterGain){
-    window.masterGain = ac.createGain();
+    // ★ masterGain もこの瞬間に必ず作る（これが本命）
+    window.masterGain = audioCtx.createGain();
     window.masterGain.gain.value = 1.0;
-    window.masterGain.connect(ac.destination);
+    window.masterGain.connect(audioCtx.destination);
+  } else {
+    // 既存でも公開だけは保証
+    window.audioCtx = audioCtx;
+    if (!window.masterGain){
+      window.masterGain = audioCtx.createGain();
+      window.masterGain.gain.value = 1.0;
+      window.masterGain.connect(audioCtx.destination);
+    }
   }
 
-  return ac;
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
 }
+
 
 
 // --- Audio unlock (重要)
