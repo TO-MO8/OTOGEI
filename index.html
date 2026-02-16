@@ -655,7 +655,6 @@ const FORCE_SONG_KEY_PC = 0;
     const ac = ensureAudio();
     if (!ac) return;
     try{
-      if (ac.state !== "running"){ ac.resume && ac.resume(); }
       // play a 1-sample silent buffer to "unlock" output
       const b = ac.createBuffer(1, 1, ac.sampleRate);
       const s = ac.createBufferSource();
@@ -956,8 +955,6 @@ function setSampleBusy(busy){
   });
 }
 
-const BASE_SAMPLE_OCT = 4; // we only ship samples for C4..B4 (+ sharps)
-
 async function ensureSampleReady(){
   // Only for sample mode. Never falls back to osc/beep automatically.
   if (soundMode !== "sample") return true;
@@ -971,7 +968,7 @@ async function ensureSampleReady(){
   if (!preloadPromise){
     setSampleBusy(true);
     setAudioStatus("サンプル読み込み中…");
-    preloadPromise = preloadAllForOct(BASE_SAMPLE_OCT)
+    preloadPromise = preloadAllForOct(octave)
       .catch((e)=>{ console.error("[sample preload] ERROR", e); })
       .finally(()=>{ setSampleBusy(false); });
   }
@@ -1075,7 +1072,7 @@ function ensurePreload(){
   return ensureSampleReady();
 }
 
-function playBuffer(buf, playbackRate=1.0, durMs=null, gain=0.95){
+function playBuffer(buf, gain=1.0, durMs=null){
   if (!masterOn) return;
   ensureAudio();
   if (!audioCtx || !buf) return;
@@ -1083,9 +1080,7 @@ function playBuffer(buf, playbackRate=1.0, durMs=null, gain=0.95){
   src.buffer = buf;
   __trackNode(src);
 
-  
-  try{ src.playbackRate.setValueAtTime(playbackRate, audioCtx.currentTime); }catch(e){}
-// If the note should last longer than the sample, loop it (simple sustain).
+  // If the note should last longer than the sample, loop it (simple sustain).
   // This isn't a perfect piano sustain, but it prevents "cut short" feel.
   if (Number.isFinite(durMs) && durMs > (buf.duration * 1000)){
     src.loop = true;
@@ -1110,42 +1105,27 @@ function playBuffer(buf, playbackRate=1.0, durMs=null, gain=0.95){
 }
 
 
-function playSampleImmediate(note, octave, durMs){
-  // Gesture-safe: NO await. Plays only if buffer is already cached.
+async function playSample(note, octave, durMs){
+  // On-demand load for the requested note. Avoid awaiting full-octave preload here.
   if (soundMode !== "sample") return false;
   if (!masterOn) return true;
   try{ ensureAudio(); }catch(e){}
   if (!audioCtx){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
-
-  const baseKey = `${note}${BASE_SAMPLE_OCT}`;
-  const cached = sampleBufCache.get(baseKey);
-  const rate = Math.pow(2, (octave - BASE_SAMPLE_OCT)); // transpose by octaves
-
+  const key = `${note}${octave}`;
+  const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
-    playBuffer(cached.buf, rate, durMs, 0.95);
+    playBuffer(cached.buf, 1.0, durMs);
     return true;
   }
-
-  // Not ready yet: kick off load in background (no await), stay silent for this tap.
   try{
-    if (!cached || cached.loading !== true){
-      sampleBufCache.set(baseKey, { ok:false, buf:null, loading:true });
-      loadSample(note, BASE_SAMPLE_OCT)
-        .then((entry)=>{ 
-          if (entry && entry.ok && entry.buf){
-            sampleBufCache.set(baseKey, { ok:true, buf:entry.buf, loading:false });
-          }else{
-            sampleBufCache.set(baseKey, { ok:false, buf:null, loading:false });
-          }
-        })
-        .catch(()=>{ sampleBufCache.set(baseKey, { ok:false, buf:null, loading:false }); });
+    const entry = await loadSample(note, octave);
+    if (entry && entry.ok && entry.buf){
+      playBuffer(entry.buf, 1.0, durMs);
+      return true;
     }
-  }catch(e){}
-
-  setAudioStatus("サンプル読み込み中…（もう一度押すと鳴ります）");
-  return true;
+  }catch(e){/* ignore */}
+  return false; // caller will fallback
 }
-
 
   // -------------------------
   // Game state
@@ -1590,11 +1570,11 @@ async function playNoteOut(note, durMs){
 
     // Samples (piano). In sample mode, NEVER fall back to oscillator/beep automatically.
     if (soundMode === "sample"){
-      // IMPORTANT: gesture-safe (no await). Use cached sample; if not loaded yet, preload and ask user to tap again.
-      ensureSampleReady(); // starts preload in background
-      const ok = playSampleImmediate(noteName, useOct, durMs);
+      await ensureSampleReady();
+      const ok = await playSample(noteName, useOct, durMs);
       if (ok) return true;
-      setAudioStatus(`音を有効化してください（🔊 ON）`);
+      // Missing sample -> silent + status (no fallback)
+      setAudioStatus(`サンプルが見つかりません: ${noteName}${useOct}（無音）`);
       return true;
     }
 
@@ -1868,8 +1848,10 @@ else if (allOkOrBetter) grade = "OK";
 
   async function onPressNote(note){
     ensureAudio();
-    // feedback sound
-    window.playNoteOut(note, 160);
+    // feedback sound (await to keep gesture chain reliable)
+    try{ syncSoundModeFromUI(); }catch(e){}
+    try{ unlockAudio(); }catch(e){}
+    try{ await window.playNoteOut(note, 180); }catch(e){ console.error('[key press] playNoteOut failed', e); }
 
     if (!answer.length){
       msgEl.textContent = "まず「問題出す」を押してね。";
@@ -1996,13 +1978,16 @@ else if (allOkOrBetter) grade = "OK";
 
 
 
-  function onAnyKeyPointerDown(e){
+  async function onAnyKeyPointerDown(e){
     const el = e.target.closest(".key");
     if (!el) return;
-    onPressNote(el.dataset.note);
+    try{ await onPressNote(el.dataset.note); }catch(err){ console.error('[pointerdown] onPressNote error', err); }
   }
   keysWrap.addEventListener("pointerdown", onAnyKeyPointerDown);
   keysSharpWrap.addEventListener("pointerdown", onAnyKeyPointerDown);
+  // Desktop fallback: also handle click
+  keysWrap.addEventListener("click", onAnyKeyPointerDown);
+  keysSharpWrap.addEventListener("click", onAnyKeyPointerDown);
   window.addEventListener("keydown", (e) => {
     const k = e.key;
 
