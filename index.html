@@ -466,7 +466,10 @@ const FORCE_SONG_KEY_PC = 0;
   let audioCtx = null;
   let masterOn = true;
 
-  // ---- Active audio nodes (for stopping overlapping preview/playback) ----
+  
+  // keep masterOn synced with global toggle
+  masterOn = (typeof window.masterOn==='boolean') ? window.masterOn : masterOn;
+// ---- Active audio nodes (for stopping overlapping preview/playback) ----
   const __activeAudio = new Set();
   function __trackNode(node){
     if (!node) return node;
@@ -636,7 +639,10 @@ const FORCE_SONG_KEY_PC = 0;
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
 
   function ensureAudio(){
+    masterOn = (typeof window.masterOn==='boolean') ? window.masterOn : masterOn;
     if (!masterOn) return null;
+    // Prefer shared/global AudioContext to avoid desync
+    if (window.ensureAudio){ const ac = window.ensureAudio(); if (ac) { audioCtx = ac; return audioCtx; } }
     const Ctor = (window.AudioContext || window.webkitAudioContext);
     if (!Ctor) return null;
     if (!audioCtx){
@@ -1251,24 +1257,6 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
   window.addEventListener('load', layoutSharps);
 
   const keyEls = [...document.querySelectorAll(".key")];
-  // --- FIX: attach handlers to on-screen piano keys (mouse/touch) ---
-  // Keys use data-note like "C","D"... (no octave). For sound feedback we force a safe octave that exists in your samples.
-  const FEEDBACK_OCTAVE = 4;
-  keyEls.forEach(el => {
-    const handler = (ev) => {
-      try{ ev.preventDefault(); }catch(e){}
-      const n = (el.dataset && el.dataset.note) ? el.dataset.note : null;
-      if (!n) return;
-      // Ensure audio is resumed and samples are prepared (non-blocking)
-      try{ unlockAudio(); ensureAudio(); ensurePreload(); }catch(e){}
-      try{ onPressNote(n); }catch(e){ console.error("[key press] onPressNote failed", e); }
-    };
-    el.addEventListener("pointerdown", handler, { passive:false });
-    el.addEventListener("click", handler);
-  });
-  // --- /FIX ---
-
-
 
   function setState(text, kind="warn"){
     stateText.textContent = text;
@@ -1568,6 +1556,7 @@ let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
 
 async function playNoteOut(note, durMs){
     // returns true if sample used (or sound suppressed)
+    masterOn = (typeof window.masterOn==='boolean') ? window.masterOn : masterOn;
     if (!masterOn) return true;
     unlockAudio();
 
@@ -1867,8 +1856,7 @@ else if (allOkOrBetter) grade = "OK";
   async function onPressNote(note){
     ensureAudio();
     // feedback sound
-    // feedback sound: force a stable octave for UI key presses
-    window.playNoteOut(`${note}${FEEDBACK_OCTAVE}`, 160);
+    window.playNoteOut(note, 160);
 
     if (!answer.length){
       msgEl.textContent = "まず「問題出す」を押してね。";
