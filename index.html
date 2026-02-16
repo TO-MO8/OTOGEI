@@ -463,8 +463,12 @@ const FORCE_SONG_KEY_PC = 0;
   // -------------------------
   // Audio: Samples (piano) + fallback beeps
   // -------------------------
-  let audioCtx = null;
-  let masterOn = true;
+  // IMPORTANT:
+  // Use the *global* audio context + master flag (window.audioCtx / window.masterOn)
+  // so Console tests and in-app playback always share the same AudioContext.
+  // (Previously a second local AudioContext/master flag could exist, causing "fetch/decode OK" but no in-game sound.)
+  let audioCtx = window.audioCtx || null;
+  let masterOn = (typeof window.masterOn === "boolean") ? window.masterOn : true;
 
   // ---- Active audio nodes (for stopping overlapping preview/playback) ----
   const __activeAudio = new Set();
@@ -636,12 +640,10 @@ const FORCE_SONG_KEY_PC = 0;
   const JP = {C:"ド","C#":"ド#",D:"レ","D#":"レ#",E:"ミ",F:"ファ","F#":"ファ#",G:"ソ","G#":"ソ#",A:"ラ","A#":"ラ#",B:"シ"};
 
   function ensureAudio(){
-    // Always use the single global AudioContext (avoids "it loads but doesn't play" bugs)
-    masterOn = !!window.masterOn;
-    if (!masterOn) return null;
-    try{
-      audioCtx = (window.ensureAudio ? window.ensureAudio() : audioCtx);
-    }catch(e){}
+    // delegate to global bootstrap and keep local alias in sync
+    const ctx = window.ensureAudio ? window.ensureAudio() : null;
+    audioCtx = window.audioCtx || ctx || audioCtx;
+    masterOn = (typeof window.masterOn === "boolean") ? window.masterOn : masterOn;
     return audioCtx;
   }
 
@@ -2062,8 +2064,9 @@ noLimit.addEventListener("change", () => {
   }
 });
 
-soundBtn.addEventListener("click", async () => {
+  soundBtn.addEventListener("click", async () => {
     masterOn = !masterOn;
+    window.masterOn = masterOn; // sync global
     soundBtn.textContent = masterOn ? "🔊 ON" : "🔇 OFF";
     if (masterOn){
       ensureAudio();
