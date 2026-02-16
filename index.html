@@ -1072,12 +1072,13 @@ function ensurePreload(){
   return ensureSampleReady();
 }
 
-function playBuffer(buf, gain=1.0, durMs=null){
+function playBuffer(buf, gain=1.0, durMs=null, rate=1.0){
   if (!masterOn) return;
   ensureAudio();
   if (!audioCtx || !buf) return;
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
+  try{ src.playbackRate.setValueAtTime(Math.max(0.01, rate||1.0), audioCtx.currentTime); }catch(e){}
   __trackNode(src);
 
   // If the note should last longer than the sample, loop it (simple sustain).
@@ -1106,26 +1107,57 @@ function playBuffer(buf, gain=1.0, durMs=null){
 
 
 async function playSample(note, octave, durMs){
-  // On-demand load for the requested note. Avoid awaiting full-octave preload here.
+  // On-demand load for the requested note.
+  // Supports octave clamping + playbackRate so keyboard never goes silent even if samples exist only for 4 octaves.
   if (soundMode !== "sample") return false;
   if (!masterOn) return true;
   try{ ensureAudio(); }catch(e){}
   if (!audioCtx){ setAudioStatus("音を有効化してください（🔊 ON）"); return false; }
-  const key = `${note}${octave}`;
+
+  const wantOct = Number(octave);
+  const key = `${note}${wantOct}`;
+
+  // 1) Exact octave cache
   const cached = sampleBufCache.get(key);
   if (cached && cached.ok && cached.buf){
-    playBuffer(cached.buf, 1.0, durMs);
+    playBuffer(cached.buf, 1.0, durMs, 1.0);
     return true;
   }
-  try{
-    const entry = await loadSample(note, octave);
-    if (entry && entry.ok && entry.buf){
-      playBuffer(entry.buf, 1.0, durMs);
+
+  // Helper: load+play a specific octave with playbackRate
+  async function loadAndPlay(oct, rate){
+    const k = `${note}${oct}`;
+    let c = sampleBufCache.get(k);
+    if (!c || !c.ok || !c.buf){
+      c = await loadSample(note, oct);
+    }
+    if (c && c.ok && c.buf){
+      playBuffer(c.buf, 1.0, durMs, rate);
       return true;
     }
-  }catch(e){/* ignore */}
-  return false; // caller will fallback
+    return false;
+  }
+
+  // 2) Try exact octave on demand
+  try{
+    if (await loadAndPlay(wantOct, 1.0)) return true;
+  }catch(e){ /* ignore */ }
+
+  // 3) Clamp octave to available 4-oct range (defaults to 3..6) and pitch-shift by octave difference.
+  // If your sample set is different, adjust MIN/MAX.
+  const MIN_OCT = 3;
+  const MAX_OCT = 6;
+  const baseOct = Math.min(MAX_OCT, Math.max(MIN_OCT, wantOct));
+  const octDiff = wantOct - baseOct; // integer steps
+  const rate = Math.pow(2, octDiff); // 1 octave = x2
+
+  try{
+    if (await loadAndPlay(baseOct, rate)) return true;
+  }catch(e){ /* ignore */ }
+
+  return false; // silent (sample missing)
 }
+
 
   // -------------------------
   // Game state
@@ -1848,10 +1880,8 @@ else if (allOkOrBetter) grade = "OK";
 
   async function onPressNote(note){
     ensureAudio();
-    // feedback sound (await to keep gesture chain reliable)
-    try{ syncSoundModeFromUI(); }catch(e){}
-    try{ unlockAudio(); }catch(e){}
-    try{ await window.playNoteOut(note, 180); }catch(e){ console.error('[key press] playNoteOut failed', e); }
+    // feedback sound
+    try{ await window.playNoteOut(note, 160); }catch(e){ console.warn("[key] playNoteOut failed", e); }
 
     if (!answer.length){
       msgEl.textContent = "まず「問題出す」を押してね。";
@@ -1978,16 +2008,13 @@ else if (allOkOrBetter) grade = "OK";
 
 
 
-  async function onAnyKeyPointerDown(e){
+  function onAnyKeyPointerDown(e){
     const el = e.target.closest(".key");
     if (!el) return;
-    try{ await onPressNote(el.dataset.note); }catch(err){ console.error('[pointerdown] onPressNote error', err); }
+    onPressNote(el.dataset.note);
   }
   keysWrap.addEventListener("pointerdown", onAnyKeyPointerDown);
   keysSharpWrap.addEventListener("pointerdown", onAnyKeyPointerDown);
-  // Desktop fallback: also handle click
-  keysWrap.addEventListener("click", onAnyKeyPointerDown);
-  keysSharpWrap.addEventListener("click", onAnyKeyPointerDown);
   window.addEventListener("keydown", (e) => {
     const k = e.key;
 
