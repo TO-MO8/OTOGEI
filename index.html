@@ -907,6 +907,9 @@ function synthPiano(freq, durMs=420, vel=0.9){
 // Sharps: prefer Cs4.mp3 style (avoid '#'), but C#4.* is also supported.
 const sampleBufCache = new Map(); // key: "C4" => {buf: AudioBuffer|null, ok:boolean}
 const EXT_TRY = ["mp3","wav","ogg"];
+
+  // Resolve asset base from the current page URL (works on GitHub Pages subpaths like /OTOGEI/)
+  const ASSET_BASE = new URL("./", location.href);
 let preloadPromise = null;
 
 // ---- Sample load UI (minimal, does not change left panel layout) ----
@@ -1003,7 +1006,7 @@ async function loadSample(note, octave){
 
   for (const ext of EXT_TRY){
     for (const stem of stems){
-      const url = `./assets/piano/${encodeURIComponent(stem)}.${ext}`;
+      const url = new URL(`assets/piano/${encodeURIComponent(stem)}.${ext}`, ASSET_BASE).href;
       const buf = await fetchAndDecode(url);
       if (buf){
         const entry = { buf, ok:true, url };
@@ -1013,7 +1016,7 @@ async function loadSample(note, octave){
     }
   }
 
-  console.warn("[sample] missing", { note, octave, tried: stems.map(s=>`./assets/piano/${s}.[${EXT_TRY.join("|")}]`) });
+  console.warn("[sample] missing", { note, octave, tried: stems.map(s=>new URL(`assets/piano/${s}.[${EXT_TRY.join("|")}]`, ASSET_BASE).href) });
   const entry = { buf:null, ok:false };
   sampleBufCache.set(key, entry);
   return entry;
