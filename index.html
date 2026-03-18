@@ -2625,10 +2625,13 @@ if (srcSel){
 
   // Octave affects BOTH: keyboard sound + quiz base octave
   // Also reset preload so the newly selected octave samples preload correctly.
-  octSel.addEventListener("change", () => {
+  octSel.addEventListener("change", async () => {
     octave = Number(octSel.value);
     preloadPromise = null;
-    if (soundMode === "sample") ensurePreload();
+    if (soundMode === "sample"){
+      await ensurePreload();
+      try{ if (window.__warmLiveInputPiano) await window.__warmLiveInputPiano(octave); }catch(_){}
+    }
     syncOctQuickUI();
     resetAll();
       try{ updateQuizBarInfo(); }catch(_e){}
@@ -2707,7 +2710,10 @@ soundBtn.addEventListener("click", async () => {
       unlockAudio();
       ensureAudio();
       syncSoundModeFromUI();
-      if (soundMode === "sample") await ensureSampleReady();
+      if (soundMode === "sample"){
+        await ensureSampleReady();
+        try{ if (window.__warmLiveInputPiano) await window.__warmLiveInputPiano(octave); }catch(_){}
+      }
     } else {
       setAudioStatus("");
       setSampleBusy(false);
@@ -2716,7 +2722,10 @@ soundBtn.addEventListener("click", async () => {
 
   soundSel.addEventListener("change", async () => {
     syncSoundModeFromUI();
-    if (soundMode === "sample") await ensureSampleReady();
+    if (soundMode === "sample"){
+      await ensureSampleReady();
+      try{ if (window.__warmLiveInputPiano) await window.__warmLiveInputPiano(octave); }catch(_){}
+    }
     else { setAudioStatus(""); }
     if (midiWrap) midiWrap.style.display = "none";
     if (soundMode === "midiout"){
@@ -3859,6 +3868,18 @@ window.addEventListener("DOMContentLoaded", ()=>{
   window.__pianoBufCache = window.__pianoBufCache || new Map();     // note -> AudioBuffer
   window.__pianoBufPromise = window.__pianoBufPromise || new Map(); // note -> Promise<AudioBuffer>
 
+  function __getSharedPianoBuffer(note){
+    try{
+      const entry = window.sampleBufCache && window.sampleBufCache.get(note);
+      const buf = entry && entry.ok && entry.buf;
+      if (buf){
+        window.__pianoBufCache.set(note, buf);
+        return buf;
+      }
+    }catch(e){}
+    return null;
+  }
+
   function __noteUrl(note){
   let n = String(note || "").trim();
 
@@ -3895,6 +3916,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
       // file:// では fetch/decode がCORSで失敗するので、静かにスキップ
       if (location && location.protocol === "file:") return Promise.resolve(null);
       if (window.__pianoBufCache.has(note)) return Promise.resolve(window.__pianoBufCache.get(note));
+      const shared = __getSharedPianoBuffer(note);
+      if (shared) return Promise.resolve(shared);
       if (window.__pianoBufPromise.has(note)) return window.__pianoBufPromise.get(note);
       const url = __noteUrl(note);
       const prom = fetch(url, { cache:"force-cache" })
@@ -3904,7 +3927,15 @@ window.addEventListener("DOMContentLoaded", ()=>{
           const p = ctx.decodeAudioData(ab, resolve, reject);
           if (p && typeof p.then === "function") p.then(resolve).catch(reject);
         }))
-        .then(buf => { window.__pianoBufCache.set(note, buf); return buf; })
+        .then(buf => {
+          window.__pianoBufCache.set(note, buf);
+          try{
+            if (window.sampleBufCache && !window.sampleBufCache.has(note)){
+              window.sampleBufCache.set(note, { buf, ok:true, url });
+            }
+          }catch(e){}
+          return buf;
+        })
         .catch(()=>null)
         .finally(()=>{ window.__pianoBufPromise.delete(note); });
       window.__pianoBufPromise.set(note, prom);
@@ -3915,7 +3946,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
   function __playBufferNow(note){
     const ctx = window.ensureAudio();
     if (!ctx) return null;
-    const buf = window.__pianoBufCache.get(note);
+    const buf = window.__pianoBufCache.get(note) || __getSharedPianoBuffer(note);
     if (!buf) return null;
     try{
       const src = ctx.createBufferSource();
@@ -3981,6 +4012,21 @@ window.addEventListener("DOMContentLoaded", ()=>{
   window.__preloadPianoSample = function(note){
     try{ window.__preloadPianoSample_HTML && window.__preloadPianoSample_HTML(note); }catch(e){}
     try{ window.__preloadPianoBuffer(note); }catch(e){}
+  };
+
+  window.__warmLiveInputPiano = window.__warmLiveInputPiano || function(oct){
+    try{
+      if (location && location.protocol === "file:") return Promise.resolve();
+      const useOct = Number.isFinite(Number(oct)) ? Number(oct) : 4;
+      const notes = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+      return Promise.all(notes.map(n => {
+        const key = `${n}${useOct}`.replace(/#/g, "s");
+        if (window.__pianoBufCache.has(key) || __getSharedPianoBuffer(key)) return Promise.resolve();
+        return window.__preloadPianoBuffer(key);
+      })).then(()=>{});
+    }catch(e){
+      return Promise.resolve();
+    }
   };
 
   // Override: play via AudioBuffer if ready, otherwise fallback to HTMLAudio pool
