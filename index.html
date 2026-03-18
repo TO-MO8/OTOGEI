@@ -684,6 +684,10 @@ const FORCE_SONG_KEY_PC = 0;
   const Ctor = (window.AudioContext || window.webkitAudioContext);
   if (!Ctor) return null;
 
+  if (!audioCtx && window.audioCtx){
+    audioCtx = window.audioCtx;
+  }
+
   if (!audioCtx){
     try{ audioCtx = new Ctor({ latencyHint: "interactive" }); }
     catch(e){ audioCtx = new Ctor(); }
@@ -2362,7 +2366,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   const __heldByKey = new Map();     // key -> sample (for keyboard input)
   window.__heldSamples = window.__heldSamples || new Map(); // sample -> handle
   const __LIVE_INPUT_SAMPLE_LOG__ = true;
-  const __MIN_INPUT_SAMPLE_MS__ = 120;
+  const __MIN_INPUT_SAMPLE_MS__ = 35;
+  const __MIN_INPUT_SAMPLE_HTML_MS__ = 80;
 
   function __sampleNameFromNote(noteName, oct){
     return noteKey(noteName, oct).replace(/#/g,"s");
@@ -2425,7 +2430,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (!h) return;
     const startedAt = Number(h.__startedAtPerf || 0);
     const elapsed = startedAt ? (performance.now() - startedAt) : null;
-    const minMs = Math.max(0, meta && meta.immediate ? 0 : __MIN_INPUT_SAMPLE_MS__);
+    const minMs = Math.max(0, meta && meta.immediate ? 0 : ((h.type === "html") ? __MIN_INPUT_SAMPLE_HTML_MS__ : __MIN_INPUT_SAMPLE_MS__));
     const waitMs = (elapsed == null) ? 0 : Math.max(0, minMs - elapsed);
     __logLiveInputSample("stop request", {
       sample,
@@ -2579,7 +2584,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     __heldByKey.delete(k);
     __heldByKey.delete(low);
     __logLiveInputSample("keyup", { key: low || k, sample });
-    __stopHeldSample(sample, 45, { via:"keyboard" });
+    __stopHeldSample(sample, 12, { via:"keyboard" });
   });
 
 
@@ -3920,7 +3925,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
       // Attack: very small ramp to avoid clicks
       const t0 = ctx.currentTime;
       g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(1.0, t0 + 0.006);
+      g.gain.exponentialRampToValueAtTime(1.0, t0 + 0.002);
 
       src.connect(g); g.connect(ctx.destination);
       src.start(t0);
