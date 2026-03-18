@@ -3794,73 +3794,9 @@ useBtn.addEventListener("click", () => {
 
   // 🔊 TEST SOUND ボタン（C4を鳴らす）
   
-// ===== Global keydown capture (single source of truth) =====
-// This prevents duplicate firing from multiple listeners / bubbling (e.g., sharp keys overlay container).
-(function(){
-  if (window.__KEY_PD_CAPTURE_BOUND__) return;
-  window.__KEY_PD_CAPTURE_BOUND__ = true;
-
-  let lastGlobalTs = 0;
-  let lastGlobalKey = "";
-  const __pidToNote = new Map();
-  document.addEventListener("pointerdown", function(e){
-    const el = e.target && e.target.closest ? e.target.closest(".key") : null;
-    if (!el) return;
-
-    // Stop any other handlers (bubble/click/mousedown) from also playing
-    try{ e.preventDefault(); }catch(_){}
-    try{ e.stopPropagation(); }catch(_){}
-    /* keep other capture listeners (audio unlock) alive */
-
-    // Extra debounce: if the same key fires twice in a short window, ignore
-    const now = performance.now();
-    const note = el.dataset.note || "";
-    if (note && note === lastGlobalKey && (now - lastGlobalTs) < 30) return;
-    lastGlobalKey = note;
-    lastGlobalTs = now;
-    try{ if (e.pointerId != null) __pidToNote.set(e.pointerId, note); }catch(_){}
-
-    try{ ensureAudio(); }catch(_){}
-    // Ensure audio is unlocked (some browsers need an actual start() in a gesture)
-    try{
-      const ctx = window.ensureAudio && window.ensureAudio();
-      if (ctx && ctx.state === "suspended") ctx.resume && ctx.resume();
-      if (ctx){
-        const t = ctx.currentTime;
-        const src = ctx.createBufferSource();
-        src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
-        src.connect(ctx.destination);
-        src.start(t);
-      }
-    }catch(_){}
-
-    try{ onPressNote(note); }catch(_){}
-  }, { capture:true, passive:false });
-
-
-  function __releaseByPointer(e){
-    try{
-      const pid = e.pointerId;
-      if (pid == null) return;
-      const note = __pidToNote.get(pid);
-      if (!note) return;
-      __pidToNote.delete(pid);
-      // Release only affects WebAudio buffer voices; HTMLAudio fallback will just ring out (acceptable).
-      try{ if (typeof window.__releaseBufferNote === "function") window.__releaseBufferNote(note, 45); }catch(_){}
-    }catch(_){}
-  }
-  document.addEventListener("pointerup", __releaseByPointer, { capture:true, passive:false });
-  document.addEventListener("pointercancel", __releaseByPointer, { capture:true, passive:false });
-
-  // Also block click-triggered sound just in case
-  document.addEventListener("click", function(e){
-    const el = e.target && e.target.closest ? e.target.closest(".key") : null;
-    if (!el) return;
-    try{ e.preventDefault(); }catch(_){}
-    try{ e.stopPropagation(); }catch(_){}
-    /* no stopImmediatePropagation */
-  }, { capture:true, passive:false });
-})();
+// NOTE:
+// 鍵盤クリック / キーボード入力 / 回答判定は上の通常ハンドラで一元管理する。
+// ここで document capture を重ねると、出題後の回答受付が止まりやすいため重複バインドはしない。
 
 window.addEventListener("DOMContentLoaded", ()=>{
     const btn = document.getElementById("__testSound");
@@ -4144,90 +4080,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
   });
 
 
-  // 現在のオクターブ（既定=4）
-  let currentOctave = 4;
-
-  // ノート名をファイル名形式に正規化（# -> s）
-  function norm(note){
-    return String(note||"")
-      .trim()
-      .replace(/♯/g,"#")
-      .replace(/#/g,"s");
-  }
-
-  // クリック/タップ二重発火対策（pointerdown + click）
-  let __lastPdMs = 0;
-  function __dupGuard(){
-    const now = performance.now();
-    if (now - __lastPdMs < 150) return true; // 150ms以内は二重とみなす
-    __lastPdMs = now;
-    return false;
-  }
-
-  function __playKey(full){
-    // サンプルが無くても鳴るように、必ず playNoteOut を経由する
-    try{
-      if (typeof playNoteOut === "function") { playNoteOut(full, 180); return; }
-    }catch(e){}
-    // 最後の保険：存在するなら旧APIで鳴らす
-    try{ if (typeof window.__playPianoSample === "function") window.__playPianoSample(full); }catch(e){}
-  }
-
-  // オクターブボタン（C3/C4/C5）を押したら currentOctave を更新（音は鳴らさない）
-  document.addEventListener("click", (e)=>{
-    const btn = e.target.closest("button");
-    if(!btn) return;
-    const t = (btn.textContent || "").trim();
-    const m = t.match(/^C(\d)$/i);
-    if(m){
-      currentOctave = parseInt(m[1], 10);
-      __dbg("octave changed:", currentOctave);
-    }
-  }, true);
-
-  // 鍵盤：pointerdown でだけ鳴らす（click は無視）
-  document.addEventListener("pointerdown", (e)=>{
-    const key = e.target.closest(".key");
-    if(!key) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-
-    if (__dupGuard()) return;
-
-    const note = key.getAttribute("data-note") || "";
-    if(!note) return;
-    const full = norm(note) + String(currentOctave);
-    __playKey(full);
-  }, {capture:true, passive:false});
-
-  // 鍵盤 click は完全にブロック（二重再生防止）
-  document.addEventListener("click", (e)=>{
-    const key = e.target.closest(".key");
-    if(!key) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-  }, true);
-
-  // 「単音を鳴らす」系ボタン（例: C5 / Ds4 など）も pointerdown でだけ鳴らす
-  document.addEventListener("pointerdown", (e)=>{
-    const btn = e.target.closest("button");
-    if(!btn) return;
-
-    const _tt = (btn.textContent || "").trim();
-    // Octave switch buttons (C3/C4/C5/C6) must NOT play a "C" preview sound
-    if (/^C[3-6]$/i.test(_tt)) return;
-
-    const m = _tt.match(/^([A-Ga-g])\s*([#♯]?)\s*(\d)$/);
-    if(!m) return;
-
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    if (__dupGuard()) return;
-
-    const note = (m[1].toUpperCase() + (m[2] || "")).replace(/♯/g,"#");
-    const full = norm(note) + m[3];
-    __playKey(full);
-  }, {capture:true, passive:false});
+  // NOTE:
+  // 鍵盤や単音ボタンの pointer/click は、上側の通常ハンドラに任せる。
+  // ここで capture ハンドラを追加すると回答受付を横取りしてしまうため、
+  // 下側では preload 補助だけ残す。
 })();
 </script>
 
