@@ -1205,6 +1205,7 @@ async function playSample(note, octave, durMs){
   if (allowed && !allowed.has(full)) return true; // silent if not available
 
   if (typeof window.__playPianoSample === "function"){
+    try{ console.log("[live sample] question play", { note, octave: reqOct, full, fn: "__playPianoSample" }); }catch(e){}
     const h = window.__playPianoSample(full);
     if (h && Number.isFinite(durMs)){
       const ms = Math.max(20, durMs|0);
@@ -2360,9 +2361,16 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   const __heldByPointer = new Map(); // pointerId -> { el, note, sample }
   const __heldByKey = new Map();     // key -> sample (for keyboard input)
   window.__heldSamples = window.__heldSamples || new Map(); // sample -> handle
+  const __LIVE_INPUT_SAMPLE_LOG__ = true;
+  const __MIN_INPUT_SAMPLE_MS__ = 120;
 
   function __sampleNameFromNote(noteName, oct){
     return noteKey(noteName, oct).replace(/#/g,"s");
+  }
+
+  function __logLiveInputSample(tag, detail){
+    if (!__LIVE_INPUT_SAMPLE_LOG__ || soundMode !== "sample") return;
+    try{ console.log(`[live sample] ${tag}`, detail); }catch(_){}
   }
 
   function __stopPianoSampleHandle(handle, fadeMs){
@@ -2390,27 +2398,62 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     }
   }
 
-  function __startHeldSample(sample){
+  function __startHeldSample(sample, meta){
     if (!sample) return;
-    if (window.__heldSamples.has(sample)) return;
+    if (window.__heldSamples.has(sample)){
+      __logLiveInputSample("start skip (already held)", { sample, via: meta && meta.via, note: meta && meta.note });
+      return;
+    }
     try{
+      __logLiveInputSample("start request", { sample, via: meta && meta.via, note: meta && meta.note, fn: "__playPianoSample" });
       const h = (typeof window.__playPianoSample === "function") ? window.__playPianoSample(sample) : null;
-      if (h) window.__heldSamples.set(sample, h);
+      if (h){
+        h.__startedAtPerf = performance.now();
+        h.__sample = sample;
+        h.__via = meta && meta.via;
+        h.__note = meta && meta.note;
+        window.__heldSamples.set(sample, h);
+        __logLiveInputSample("start ok", { sample, via: h.__via, note: h.__note, handleType: h.type || typeof h });
+      }else{
+        __logLiveInputSample("start no handle", { sample, via: meta && meta.via, note: meta && meta.note });
+      }
     }catch(_){}
   }
 
-  function __stopHeldSample(sample, fadeMs){
+  function __stopHeldSample(sample, fadeMs, meta){
     const h = window.__heldSamples && window.__heldSamples.get(sample);
     if (!h) return;
-    __stopPianoSampleHandle(h, fadeMs);
+    const startedAt = Number(h.__startedAtPerf || 0);
+    const elapsed = startedAt ? (performance.now() - startedAt) : null;
+    const minMs = Math.max(0, meta && meta.immediate ? 0 : __MIN_INPUT_SAMPLE_MS__);
+    const waitMs = (elapsed == null) ? 0 : Math.max(0, minMs - elapsed);
+    __logLiveInputSample("stop request", {
+      sample,
+      via: (meta && meta.via) || h.__via,
+      note: h.__note,
+      fn: "__stopPianoSampleHandle",
+      elapsedMs: elapsed == null ? null : Math.round(elapsed),
+      waitMs: Math.round(waitMs)
+    });
     try{ window.__heldSamples.delete(sample); }catch(_){}
+    const runner = () => {
+      __logLiveInputSample("stop exec", {
+        sample,
+        via: (meta && meta.via) || h.__via,
+        note: h.__note,
+        handleType: h.type || typeof h
+      });
+      __stopPianoSampleHandle(h, fadeMs);
+    };
+    if (waitMs > 0) setTimeout(runner, waitMs);
+    else runner();
   }
 
   function __releaseAllHeld(){
     try{
       const m = window.__heldSamples;
       if (!m) return;
-      [...m.keys()].forEach(s => __stopHeldSample(s, 45));
+      [...m.keys()].forEach(s => __stopHeldSample(s, 45, { via:"release-all", immediate:true }));
     }catch(_){}
   }
 
@@ -2442,7 +2485,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     // - other modes (synth/gmpiano/beep/midiout): play one-shot immediately
     if (soundMode === "sample"){
       const sample = __sampleNameFromNote(note, octave);
-      __startHeldSample(sample);
+      __logLiveInputSample("pointerdown", { note, octave, sample });
+      __startHeldSample(sample, { via:"pointer", note });
       __heldByPointer.set(e.pointerId, { el, note, sample });
       try{ el.setPointerCapture(e.pointerId); }catch(_){}
       el.classList.add("held");
@@ -2459,7 +2503,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (!info) return;
     __heldByPointer.delete(e.pointerId);
     if (info.el) info.el.classList.remove("held");
-    __stopHeldSample(info.sample, 5);
+    __logLiveInputSample("pointerup", { note: info.note, sample: info.sample });
+    __stopHeldSample(info.sample, 5, { via:"pointer", note: info.note });
   }
 
   keysWrap.addEventListener("pointerdown", onAnyKeyPointerDown, { passive:false });
@@ -2499,8 +2544,9 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       const note = NOTE_NAMES[Number(k)-1];
       if (soundMode === "sample"){
         const sample = __sampleNameFromNote(note, octave);
+        __logLiveInputSample("keydown", { key: k, note, octave, sample });
         __heldByKey.set(k, sample);
-        __startHeldSample(sample);
+        __startHeldSample(sample, { via:"keyboard", note });
       }else{
         try{ playNoteOut(note, 180); }catch(_){}
       }
@@ -2514,8 +2560,9 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       const note = map[low];
       if (soundMode === "sample"){
         const sample = __sampleNameFromNote(note, octave);
+        __logLiveInputSample("keydown", { key: low, note, octave, sample });
         __heldByKey.set(low, sample);
-        __startHeldSample(sample);
+        __startHeldSample(sample, { via:"keyboard", note });
       }else{
         try{ playNoteOut(note, 180); }catch(_){}
       }
@@ -2531,7 +2578,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (!sample) return;
     __heldByKey.delete(k);
     __heldByKey.delete(low);
-    __stopHeldSample(sample, 45);
+    __logLiveInputSample("keyup", { key: low || k, sample });
+    __stopHeldSample(sample, 45, { via:"keyboard" });
   });
 
 
@@ -3766,6 +3814,7 @@ useBtn.addEventListener("click", () => {
       a.currentTime = 0;
       a.volume = 1.0;
       a.play().catch(err => console.warn("[sample play blocked]", err));
+      try{ console.log("[live sample] __playPianoSample html", { note, url }); }catch(e){}
       return { type:"html", audio:a, note };
     }catch(e){
       console.warn("[sample play error]", e);
@@ -3933,7 +3982,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
   window.__playPianoSample = function(note){
     // If buffer ready, this is the fastest path
     const h = __playBufferNow(note);
-    if (h) return h;
+    if (h){
+      try{ console.log("[live sample] __playPianoSample buffer", { note }); }catch(e){}
+      return h;
+    }
     // If not ready yet, kick decode and fallback immediately
     try{ window.__preloadPianoBuffer(note); }catch(e){}
     try{ return window.__playPianoSample_HTML && window.__playPianoSample_HTML(note); }catch(e){}
