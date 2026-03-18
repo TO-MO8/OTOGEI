@@ -2130,6 +2130,10 @@ else if (allOkOrBetter) grade = "OK";
     msgEl.textContent = label + "（「問題出す」で次へ）";
   }
 
+  function getMelodyNeedLen(){
+    return Math.max(1, (Array.isArray(answer) && answer.length) ? answer.length : melodyLen);
+  }
+
   async function onPressNote(note){
   try{
     ensureAudio();
@@ -2175,7 +2179,8 @@ else if (allOkOrBetter) grade = "OK";
       }
     }
     else {
-      if (input.length >= melodyLen){
+      const needLen = getMelodyNeedLen();
+      if (input.length >= needLen){
         const r = judgeMelody();
         const chips = r.results.map(x => {
           const a = noteLabel(x.exp);
@@ -2187,7 +2192,7 @@ else if (allOkOrBetter) grade = "OK";
         if (r.grade !== "MISS") flashKey(note);
         if (r.grade === "MISS") showAnswerHint();
       } else {
-        const left = melodyLen - input.length;
+        const left = needLen - input.length;
         msgEl.textContent = `あと ${left} 音入力してね。`;
       }
     }
