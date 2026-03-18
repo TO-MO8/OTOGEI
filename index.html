@@ -1205,10 +1205,10 @@ async function playSample(note, octave, durMs){
   if (allowed && !allowed.has(full)) return true; // silent if not available
 
   if (typeof window.__playPianoSample === "function"){
-    const a = window.__playPianoSample(full);
-    if (a && Number.isFinite(durMs)){
+    const h = window.__playPianoSample(full);
+    if (h && Number.isFinite(durMs)){
       const ms = Math.max(20, durMs|0);
-      setTimeout(()=>{ try{ a.pause(); a.currentTime = 0; }catch(e){} }, ms);
+      setTimeout(()=>{ try{ __stopPianoSampleHandle(h, 10); }catch(e){} }, ms);
     }
     return true;
   }
@@ -2365,69 +2365,44 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     return noteKey(noteName, oct).replace(/#/g,"s");
   }
 
+  function __stopPianoSampleHandle(handle, fadeMs){
+    if (!handle) return;
+    if (handle.type === "buffer"){
+      try{
+        const ctx = window.ensureAudio && window.ensureAudio();
+        if (ctx && handle.gain && handle.src){
+          const t = ctx.currentTime;
+          const dur = Math.max(0.005, (fadeMs==null?5:fadeMs)/1000);
+          handle.gain.gain.cancelScheduledValues(t);
+          const cur = Math.max(0.0001, handle.gain.gain.value || 0.0001);
+          handle.gain.gain.setValueAtTime(cur, t);
+          handle.gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+          handle.src.stop(t + dur + 0.01);
+        }else if (handle.src){
+          try{ handle.src.stop(); }catch(_){}
+        }
+      }catch(_){}
+      return;
+    }
+    const audio = handle.audio || handle;
+    if (audio && typeof audio.pause === "function"){
+      try{ audio.pause(); audio.currentTime = 0; }catch(_){}
+    }
+  }
+
   function __startHeldSample(sample){
     if (!sample) return;
     if (window.__heldSamples.has(sample)) return;
-
-    // Prefer AudioBuffer (fast + consistent). If not ready, fallback to HTMLAudio.
     try{
-      const ctx = window.ensureAudio && window.ensureAudio();
-      const buf = ctx && window.__pianoBufCache && window.__pianoBufCache.get(sample);
-      if (ctx && buf){
-        const src = ctx.createBufferSource();
-        src.buffer = buf;
-        src.loop = true;
-
-        const g = ctx.createGain();
-        const t0 = ctx.currentTime;
-        g.gain.setValueAtTime(0.0001, t0);
-        g.gain.exponentialRampToValueAtTime(1.0, t0 + 0.006);
-
-        src.connect(g); g.connect(ctx.destination);
-        src.start(t0);
-
-        const h = { type:"buffer", src, gain:g, sample };
-        window.__heldSamples.set(sample, h);
-        src.onended = ()=>{ try{ window.__heldSamples.delete(sample); }catch(_){} };
-        return;
-      }
-    }catch(_){}
-
-    // HTMLAudio fallback (loop). Use a dedicated element so we can stop it reliably.
-    try{
-      const url = __noteUrl(sample);
-
-      const a = new Audio(url);
-      a.preload = "auto";
-      a.loop = true;
-      a.volume = 1.0;
-      a.play().catch(()=>{});
-      window.__heldSamples.set(sample, { type:"html", audio:a, sample });
+      const h = (typeof window.__playPianoSample === "function") ? window.__playPianoSample(sample) : null;
+      if (h) window.__heldSamples.set(sample, h);
     }catch(_){}
   }
 
   function __stopHeldSample(sample, fadeMs){
     const h = window.__heldSamples && window.__heldSamples.get(sample);
     if (!h) return;
-
-    if (h.type === "buffer"){
-      try{
-        const ctx = window.ensureAudio && window.ensureAudio();
-        if (ctx){
-          const t = ctx.currentTime;
-          const dur = Math.max(0.005, (fadeMs==null?5:fadeMs)/1000);
-          h.gain.gain.cancelScheduledValues(t);
-          const cur = Math.max(0.0001, h.gain.gain.value || 0.0001);
-          h.gain.gain.setValueAtTime(cur, t);
-          h.gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-          h.src.stop(t + dur + 0.01);
-        }else{
-          try{ h.src.stop(); }catch(_){}
-        }
-      }catch(_){}
-    }else{
-      try{ h.audio.pause(); h.audio.currentTime = 0; }catch(_){}
-    }
+    __stopPianoSampleHandle(h, fadeMs);
     try{ window.__heldSamples.delete(sample); }catch(_){}
   }
 
@@ -3791,7 +3766,7 @@ useBtn.addEventListener("click", () => {
       a.currentTime = 0;
       a.volume = 1.0;
       a.play().catch(err => console.warn("[sample play blocked]", err));
-      return a;
+      return { type:"html", audio:a, note };
     }catch(e){
       console.warn("[sample play error]", e);
     }
@@ -3957,7 +3932,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
   // Override: play via AudioBuffer if ready, otherwise fallback to HTMLAudio pool
   window.__playPianoSample = function(note){
     // If buffer ready, this is the fastest path
-    if (__playBufferNow(note)) return;
+    const h = __playBufferNow(note);
+    if (h) return h;
     // If not ready yet, kick decode and fallback immediately
     try{ window.__preloadPianoBuffer(note); }catch(e){}
     try{ return window.__playPianoSample_HTML && window.__playPianoSample_HTML(note); }catch(e){}
