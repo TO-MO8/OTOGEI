@@ -1218,7 +1218,8 @@ async function playSample(note, octave, durMs){
 
   if (typeof window.__playPianoSample === "function"){
     try{ console.log("[live sample] question play", { note, octave: reqOct, full, fn: "__playPianoSample" }); }catch(e){}
-    const h = window.__playPianoSample(full);
+    const callPerf = performance.now();
+    const h = window.__playPianoSample(full, { via:"question", callPerf });
     if (h && Number.isFinite(durMs)){
       const ms = Math.max(20, durMs|0);
       setTimeout(()=>{ try{ __stopPianoSampleHandle(h, 10); }catch(e){} }, ms);
@@ -2418,8 +2419,12 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       return;
     }
     try{
+      const eventPerf = Number(meta && meta.eventPerf);
+      const callPerf = performance.now();
       __logLiveInputSample("start request", { sample, via: meta && meta.via, note: meta && meta.note, fn: "__playPianoSample" });
-      const h = (typeof window.__playPianoSample === "function") ? window.__playPianoSample(sample) : null;
+      if (Number.isFinite(eventPerf)) console.log("[live sample] pointerdown_to_play_call_ms", Number((callPerf - eventPerf).toFixed(3)));
+      const playMeta = Object.assign({}, meta, { callPerf });
+      const h = (typeof window.__playPianoSample === "function") ? window.__playPianoSample(sample, playMeta) : null;
       if (h){
         h.__startedAtPerf = performance.now();
         h.__sample = sample;
@@ -2499,7 +2504,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (soundMode === "sample"){
       const sample = __sampleNameFromNote(note, octave);
       __logLiveInputSample("pointerdown", { note, octave, sample });
-      __startHeldSample(sample, { via:"pointer", note });
+      __startHeldSample(sample, { via:"pointer", note, eventPerf: Number(e.timeStamp) });
       __heldByPointer.set(e.pointerId, { el, note, sample });
       try{ el.setPointerCapture(e.pointerId); }catch(_){}
       el.classList.add("held");
@@ -3951,7 +3956,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     }catch(e){ return null; }
   };
 
-  function __playBufferNow(note){
+  function __playBufferNow(note, meta){
     const ctx = window.ensureAudio();
     if (!ctx) return null;
     const buf = window.__pianoBufCache.get(note) || __getSharedPianoBuffer(note);
@@ -3961,15 +3966,34 @@ window.addEventListener("DOMContentLoaded", ()=>{
       src.buffer = buf;
 
       const g = ctx.createGain();
-      // Attack: very small ramp to avoid clicks
-      const t0 = ctx.currentTime;
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(1.0, t0 + 0.002);
+      const nowCtx = ctx.currentTime;
+      const startAt = nowCtx;
+      const isLive = !meta || meta.via === "pointer" || meta.via === "keyboard" || meta.via === "live";
+      const attackMs = isLive ? 0.2 : 2.0;
+      const attackEndAt = startAt + (attackMs / 1000);
+      const eventPerf = Number(meta && meta.eventPerf);
+      const callPerf = Number(meta && meta.callPerf);
+      const callPerfNow = Number.isFinite(callPerf) ? callPerf : performance.now();
+      const startLeadMs = (startAt - nowCtx) * 1000;
+      const audibleMs = (Number.isFinite(eventPerf) ? (callPerfNow - eventPerf) : 0) + Math.max(0, startLeadMs) + attackMs;
+      g.gain.setValueAtTime(0.0001, startAt);
+      if (attackMs <= 0.25) g.gain.linearRampToValueAtTime(1.0, attackEndAt);
+      else g.gain.exponentialRampToValueAtTime(1.0, attackEndAt);
 
       src.connect(g); g.connect(ctx.destination);
-      src.start(t0);
+      src.start(startAt);
 
-      const voice = { src, gain: g, startedAt: t0, note };
+      const via = (meta && meta.via) || "unknown";
+      try{
+        console.log(`[live sample] ${via} event_to_play_call_ms`, Number((Number.isFinite(eventPerf) ? (callPerfNow - eventPerf) : 0).toFixed(3)));
+        console.log(`[live sample] ${via} play_call_to_start_schedule_ms`, Number((Math.max(0, startLeadMs)).toFixed(3)));
+        console.log(`[live sample] ${via} source_start_offset_ms`, Number(startLeadMs.toFixed(3)));
+        console.log(`[live sample] ${via} gain_attack_ms`, Number(attackMs.toFixed(3)));
+        console.log(`[live sample] ${via} gain_ready_ms`, Number((((attackEndAt - nowCtx) * 1000)).toFixed(3)));
+        console.log(`[live sample] ${via} event_to_audible_ms`, Number(audibleMs.toFixed(3)));
+      }catch(_){ }
+
+      const voice = { src, gain: g, startedAt: startAt, note };
       window.__activeNoteVoices = window.__activeNoteVoices || new Map();
       const arr = window.__activeNoteVoices.get(note) || [];
       arr.push(voice);
@@ -4038,9 +4062,9 @@ window.addEventListener("DOMContentLoaded", ()=>{
   };
 
   // Override: play via AudioBuffer if ready, otherwise fallback to HTMLAudio pool
-  window.__playPianoSample = function(note){
+  window.__playPianoSample = function(note, meta){
     // If buffer ready, this is the fastest path
-    const h = __playBufferNow(note);
+    const h = __playBufferNow(note, meta);
     if (h){
       try{ console.log("[live sample] __playPianoSample buffer", { note }); }catch(e){}
       return h;
