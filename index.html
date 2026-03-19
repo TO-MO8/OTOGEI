@@ -1011,6 +1011,8 @@ const sampleCache = window.sampleCache; // 既存コード互換の別名
 // --- Global sample caches (AudioBuffer) ---
 window.sampleCache = window.sampleCache || new Map(); // key: "C4" など -> {buf, ok, url}
 const sampleBufCache = window.sampleCache;            // 互換用の別名（既存コードを壊さない）
+window.sampleLoadPromises = window.sampleLoadPromises || new Map();
+const sampleLoadPromises = window.sampleLoadPromises;
 
 
 const EXT_TRY = ["mp3"];
@@ -1074,8 +1076,8 @@ async function fetchAndDecode(url){
   const ctrl = new AbortController();
   const t = setTimeout(()=>{ try{ ctrl.abort(); }catch(e){} }, 8000);
   try{
-    // Use no-store to avoid weird cached/opaque responses and stale layers
-    res = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+    // GitHub Pages でも初回後は HTTP キャッシュを活かしやすくする
+    res = await fetch(url, { cache: "force-cache", signal: ctrl.signal });
   }catch(err){
     clearTimeout(t);
     console.error("[sample fetch] ERROR", { url, err });
@@ -1110,6 +1112,7 @@ async function fetchAndDecode(url){
 async function loadSample(note, octave){
    const key = `${note}${octave}`.replace("#","s"); // cache key を Cs4 形式に統一
   if (sampleBufCache.has(key)) return sampleBufCache.get(key);
+  if (sampleLoadPromises.has(key)) return sampleLoadPromises.get(key);
 
   // Normalize naming to your repo assets:
   // - Sharps prefer "Cs4" style (s), but we also try "C#4" if present.
@@ -1122,40 +1125,45 @@ const keyS = key.replace("#", "s");                 // keyもCs4形式に
 const stems = Array.from(new Set([stemS, stemSharp, keyS, key]));
 
  
+  const task = (async () => {
+    for (const ext of EXT_TRY){
+      for (const stem of stems){
+        const __LOG_PIANO_SAMPLES__ = false; // ← true にするとまた出せる
+        if (__LOG_PIANO_SAMPLES__) console.log("[piano sample]", {stem, ext});
 
-  for (const ext of EXT_TRY){
-    for (const stem of stems){
-      const __LOG_PIANO_SAMPLES__ = false; // ← true にするとまた出せる
-      if (__LOG_PIANO_SAMPLES__) console.log("[piano sample]", {stem, ext});
-
-
-      const url = `./assets/piano/${encodeURIComponent(stem)}.${ext}`;
-      const buf = await fetchAndDecode(url);
-      if (buf){
-        const entry = { buf, ok:true, url };
-        sampleBufCache.set(key, entry);
-        return entry;
+        const url = `./assets/piano/${encodeURIComponent(stem)}.${ext}`;
+        const buf = await fetchAndDecode(url);
+        if (buf){
+          const entry = { buf, ok:true, url };
+          sampleBufCache.set(key, entry);
+          return entry;
+        }
       }
     }
-  }
 
-  console.warn("[sample] missing", { note, octave, tried: stems.map(s=>`./assets/piano/${s}.[${EXT_TRY.join("|")}]`) });
-  const entry = { buf:null, ok:false };
-  sampleBufCache.set(key, entry);
-  return entry;
+    console.warn("[sample] missing", { note, octave, tried: stems.map(s=>`./assets/piano/${s}.[${EXT_TRY.join("|")}]`) });
+    const entry = { buf:null, ok:false };
+    sampleBufCache.set(key, entry);
+    return entry;
+  })().finally(() => {
+    sampleLoadPromises.delete(key);
+  });
+  sampleLoadPromises.set(key, task);
+  return task;
 }
 
 async function preloadAllForOct(oct){
   // preload common 12 notes for the selected octave to avoid "first press" lag
-  const list = ALL_NOTES.map(n => `${n}${oct}`);
-  for (const k of list){
-    const note = k.replace(/[0-9]/g,"").replace("s","#"); // not used; keep simple
-    // we call loadSample with original note names
-  }
-  for (const n of ALL_NOTES){
-    await loadSample(n, oct);
-  }
+  await Promise.all(ALL_NOTES.map(n => loadSample(n, oct)));
 }
+
+window.__loadPianoSampleBuffer = window.__loadPianoSampleBuffer || function(note){
+  const m = /^([A-G](?:#|s)?)(\d)$/.exec(String(note || "").trim());
+  if (!m) return Promise.resolve(null);
+  const noteName = m[1].replace(/s/g, "#");
+  const oct = Number(m[2]);
+  return loadSample(noteName, oct);
+};
 
 function ensurePreload(){
   // Backward compatible wrapper
@@ -3920,14 +3928,14 @@ window.addEventListener("DOMContentLoaded", ()=>{
       if (shared) return Promise.resolve(shared);
       if (window.__pianoBufPromise.has(note)) return window.__pianoBufPromise.get(note);
       const url = __noteUrl(note);
-      const prom = fetch(url, { cache:"force-cache" })
-        .then(r => { if(!r.ok) throw new Error("fetch fail "+r.status); return r.arrayBuffer(); })
-        .then(ab => new Promise((resolve, reject)=>{
-          // decodeAudioData API differences
-          const p = ctx.decodeAudioData(ab, resolve, reject);
-          if (p && typeof p.then === "function") p.then(resolve).catch(reject);
-        }))
-        .then(buf => {
+      const prom = Promise.resolve(
+        (typeof window.__loadPianoSampleBuffer === "function")
+          ? window.__loadPianoSampleBuffer(note)
+          : null
+      )
+        .then(entry => {
+          const buf = entry && entry.ok && entry.buf ? entry.buf : null;
+          if (!buf) return null;
           window.__pianoBufCache.set(note, buf);
           try{
             if (window.sampleBufCache && !window.sampleBufCache.has(note)){
