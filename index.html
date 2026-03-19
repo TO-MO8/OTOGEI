@@ -2375,8 +2375,9 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   const __heldByKey = new Map();     // key -> sample (for keyboard input)
   window.__heldSamples = window.__heldSamples || new Map(); // sample -> handle
   const __LIVE_INPUT_SAMPLE_LOG__ = true;
-  const __MIN_INPUT_SAMPLE_MS__ = 35;
+  const __MIN_INPUT_SAMPLE_MS__ = 24;
   const __MIN_INPUT_SAMPLE_HTML_MS__ = 80;
+  const __LIVE_INPUT_RELEASE_MS__ = 4;
 
   function __sampleNameFromNote(noteName, oct){
     return noteKey(noteName, oct).replace(/#/g,"s");
@@ -2394,12 +2395,14 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         const ctx = window.ensureAudio && window.ensureAudio();
         if (ctx && handle.gain && handle.src){
           const t = ctx.currentTime;
-          const dur = Math.max(0.005, (fadeMs==null?5:fadeMs)/1000);
+          const isLiveRelease = handle.__via === "pointer" || handle.__via === "keyboard" || handle.__via === "live";
+          const dur = Math.max(isLiveRelease ? 0.004 : 0.005, (fadeMs==null?(isLiveRelease ? __LIVE_INPUT_RELEASE_MS__ : 5):fadeMs)/1000);
+          const stopTail = isLiveRelease ? 0.004 : 0.01;
           handle.gain.gain.cancelScheduledValues(t);
           const cur = Math.max(0.0001, handle.gain.gain.value || 0.0001);
           handle.gain.gain.setValueAtTime(cur, t);
           handle.gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-          handle.src.stop(t + dur + 0.01);
+          handle.src.stop(t + dur + stopTail);
         }else if (handle.src){
           try{ handle.src.stop(); }catch(_){}
         }
@@ -2522,7 +2525,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     __heldByPointer.delete(e.pointerId);
     if (info.el) info.el.classList.remove("held");
     __logLiveInputSample("pointerup", { note: info.note, sample: info.sample });
-    __stopHeldSample(info.sample, 5, { via:"pointer", note: info.note });
+    __stopHeldSample(info.sample, __LIVE_INPUT_RELEASE_MS__, { via:"pointer", note: info.note });
   }
 
   keysWrap.addEventListener("pointerdown", onAnyKeyPointerDown, { passive:false });
@@ -2597,7 +2600,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     __heldByKey.delete(k);
     __heldByKey.delete(low);
     __logLiveInputSample("keyup", { key: low || k, sample });
-    __stopHeldSample(sample, 12, { via:"keyboard" });
+    __stopHeldSample(sample, __LIVE_INPUT_RELEASE_MS__, { via:"keyboard" });
   });
 
 
