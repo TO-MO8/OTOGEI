@@ -506,6 +506,7 @@ const FORCE_SONG_KEY_PC = 0;
       });
     }catch(e){}
     __activeAudio.clear();
+    try{ if (typeof window.__stopActivePianoSamples === "function") window.__stopActivePianoSamples(); }catch(e){}
   }
   try{ window.__stopAllAudio = stopAllAudio; }catch(e){}
 
@@ -1220,9 +1221,18 @@ async function playSample(note, octave, durMs){
     try{ console.log("[live sample] question play", { note, octave: reqOct, full, fn: "__playPianoSample" }); }catch(e){}
     const callPerf = performance.now();
     const h = window.__playPianoSample(full, { via:"question", callPerf });
+    if (h){
+      try{
+        window.__activePianoSampleHandles = window.__activePianoSampleHandles || new Set();
+        window.__activePianoSampleHandles.add(h);
+      }catch(e){}
+    }
     if (h && Number.isFinite(durMs)){
       const ms = Math.max(20, durMs|0);
-      setTimeout(()=>{ try{ __stopPianoSampleHandle(h, 10); }catch(e){} }, ms);
+      setTimeout(()=>{
+        try{ __stopPianoSampleHandle(h, 10); }catch(e){}
+        try{ window.__activePianoSampleHandles && window.__activePianoSampleHandles.delete(h); }catch(e){}
+      }, ms);
     }
     return true;
   }
@@ -2236,9 +2246,17 @@ else if (allOkOrBetter) grade = "OK";
     msgEl.textContent = "「問題出す」を押して、音だけで当ててね。";
   }
 
+  function __stopFullSongPlaybackForQuiz(){
+    try{ __previewRunId++; }catch(e){}
+    try{ __isAllPlaying = false; }catch(e){}
+    try{ if (playAllBtn) playAllBtn.textContent = "一曲再生"; }catch(e){}
+    try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(e){}
+  }
+
   // Events
   newBtn.addEventListener("click", () => {
     ensureAudio();
+    __stopFullSongPlaybackForQuiz();
     if (soundMode === "sample") ensurePreload();
     // Quiz ("問題を出す") should start from the beginning of the song.
     // Full-song playback already starts at 0, but the quiz uses songPos which can be advanced by previous questions.
@@ -2414,6 +2432,24 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       try{ audio.pause(); audio.currentTime = 0; }catch(_){}
     }
   }
+
+
+  window.__stopActivePianoSamples = function(){
+    try{
+      const hs = window.__activePianoSampleHandles;
+      if (hs && typeof hs.forEach === "function") hs.forEach(h => { try{ __stopPianoSampleHandle(h, 0); }catch(_){} });
+      if (hs && typeof hs.clear === "function") hs.clear();
+    }catch(_){ }
+    try{
+      const voices = window.__activeNoteVoices;
+      if (voices && typeof voices.forEach === "function"){
+        voices.forEach(arr => {
+          (arr || []).slice().forEach(v => { try{ __stopPianoSampleHandle(v, 0); }catch(_){} });
+        });
+        if (typeof voices.clear === "function") voices.clear();
+      }
+    }catch(_){ }
+  };
 
   function __startHeldSample(sample, meta){
     if (!sample) return;
