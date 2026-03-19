@@ -3880,6 +3880,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
   window.__pianoBufCache = window.__pianoBufCache || new Map();     // note -> AudioBuffer
   window.__pianoBufPromise = window.__pianoBufPromise || new Map(); // note -> Promise<AudioBuffer>
+  window.__pianoLeadTrimMsCache = window.__pianoLeadTrimMsCache || new Map();
+  window.__LIVE_INPUT_SAMPLE_TRIM_OVERRIDES_MS__ = window.__LIVE_INPUT_SAMPLE_TRIM_OVERRIDES_MS__ || Object.create(null);
 
   function __getSharedPianoBuffer(note){
     try{
@@ -3892,6 +3894,50 @@ window.addEventListener("DOMContentLoaded", ()=>{
     }catch(e){}
     return null;
   }
+
+  function __measureLeadTrimMs(buf){
+    try{
+      if (!buf || typeof buf.length !== "number" || !buf.numberOfChannels) return 0;
+      const channels = [];
+      for (let ch = 0; ch < buf.numberOfChannels; ch++) channels.push(buf.getChannelData(ch));
+      if (!channels.length) return 0;
+      const sr = Math.max(1, Number(buf.sampleRate) || 44100);
+      const maxScan = Math.min(buf.length, Math.floor(sr * 0.25)); // 先頭250msだけ見る
+      const threshold = 0.0035;
+      for (let i = 0; i < maxScan; i++){
+        for (let ch = 0; ch < channels.length; ch++){
+          if (Math.abs(channels[ch][i]) >= threshold) return (i / sr) * 1000;
+        }
+      }
+    }catch(e){}
+    return 0;
+  }
+
+  function __getLeadTrimMs(note, buf){
+    const key = String(note || "");
+    try{
+      const overrideMs = Number(window.__LIVE_INPUT_SAMPLE_TRIM_OVERRIDES_MS__ && window.__LIVE_INPUT_SAMPLE_TRIM_OVERRIDES_MS__[key]);
+      if (Number.isFinite(overrideMs) && overrideMs > 0) return overrideMs;
+    }catch(e){}
+    try{
+      if (window.__pianoLeadTrimMsCache.has(key)) return window.__pianoLeadTrimMsCache.get(key) || 0;
+    }catch(e){}
+    const trimMs = __measureLeadTrimMs(buf);
+    try{
+      window.__pianoLeadTrimMsCache.set(key, trimMs);
+      console.log("[sample trim]", { note: key, trimMs: Number(trimMs.toFixed(3)) });
+    }catch(e){}
+    return trimMs;
+  }
+
+  window.__dumpLiveInputSampleTrimMs = window.__dumpLiveInputSampleTrimMs || function(notes){
+    const list = Array.isArray(notes) && notes.length ? notes : ["C4","D4","E4","F4","G4","A4","B4"];
+    return list.map(note => {
+      const buf = window.__pianoBufCache.get(note) || __getSharedPianoBuffer(note);
+      const trimMs = buf ? __getLeadTrimMs(note, buf) : null;
+      return { note, trimMs };
+    });
+  };
 
   function __noteUrl(note){
   let n = String(note || "").trim();
@@ -3969,6 +4015,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const nowCtx = ctx.currentTime;
       const startAt = nowCtx;
       const isLive = !meta || meta.via === "pointer" || meta.via === "keyboard" || meta.via === "live";
+      const trimMs = isLive ? __getLeadTrimMs(note, buf) : 0;
+      const trimSec = Math.max(0, Math.min(buf.duration - 0.001, trimMs / 1000));
       const attackMs = isLive ? 0.2 : 2.0;
       const attackEndAt = startAt + (attackMs / 1000);
       const eventPerf = Number(meta && meta.eventPerf);
@@ -3981,13 +4029,14 @@ window.addEventListener("DOMContentLoaded", ()=>{
       else g.gain.exponentialRampToValueAtTime(1.0, attackEndAt);
 
       src.connect(g); g.connect(ctx.destination);
-      src.start(startAt);
+      src.start(startAt, trimSec);
 
       const via = (meta && meta.via) || "unknown";
       try{
         console.log(`[live sample] ${via} event_to_play_call_ms`, Number((Number.isFinite(eventPerf) ? (callPerfNow - eventPerf) : 0).toFixed(3)));
         console.log(`[live sample] ${via} play_call_to_start_schedule_ms`, Number((Math.max(0, startLeadMs)).toFixed(3)));
         console.log(`[live sample] ${via} source_start_offset_ms`, Number(startLeadMs.toFixed(3)));
+        console.log(`[live sample] ${via} sample_trim_ms`, Number((trimSec * 1000).toFixed(3)));
         console.log(`[live sample] ${via} gain_attack_ms`, Number(attackMs.toFixed(3)));
         console.log(`[live sample] ${via} gain_ready_ms`, Number((((attackEndAt - nowCtx) * 1000)).toFixed(3)));
         console.log(`[live sample] ${via} event_to_audible_ms`, Number(audibleMs.toFixed(3)));
