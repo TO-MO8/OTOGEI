@@ -2247,10 +2247,12 @@ else if (allOkOrBetter) grade = "OK";
   }
 
   function __stopFullSongPlaybackForQuiz(){
-    try{ __previewRunId++; }catch(e){}
-    try{ __isAllPlaying = false; }catch(e){}
-    try{ if (playAllBtn) playAllBtn.textContent = "一曲再生"; }catch(e){}
-    try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(e){}
+    try{
+      if (typeof window.__stopFullSongPlayback === "function") window.__stopFullSongPlayback({ resetToStart:true });
+      else if (window.__stopAllAudio) window.__stopAllAudio();
+    }catch(e){
+      try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(_e){}
+    }
   }
 
   // Events
@@ -3452,9 +3454,62 @@ return trSources[0]?.id || sources[0].id;
   const useBtn = document.getElementById("midiUseTrackBtn");
   const hint = document.getElementById("midiHint");
   const previewBtn = document.getElementById("midiPreview8Btn");
-  let __previewRunId = 0;
   const playAllBtn = document.getElementById("midiPlayAllBtn");
-  let __isAllPlaying = false;
+  const __songPlaybackState = window.__songPlaybackState || (window.__songPlaybackState = {
+    runId: 0,
+    isAllPlaying: false,
+    timers: new Set(),
+    intervals: new Set(),
+    rafs: new Set()
+  });
+  const __getPreviewRunId = () => Number(__songPlaybackState.runId || 0);
+  const __setPreviewRunId = (v) => {
+    __songPlaybackState.runId = Number(v) || 0;
+    return __songPlaybackState.runId;
+  };
+  const __nextPreviewRunId = () => __setPreviewRunId(__getPreviewRunId() + 1);
+  const __getIsAllPlaying = () => !!__songPlaybackState.isAllPlaying;
+  const __setIsAllPlaying = (v) => {
+    __songPlaybackState.isAllPlaying = !!v;
+    return __songPlaybackState.isAllPlaying;
+  };
+  function __clearSongPlaybackAsync(){
+    try{
+      __songPlaybackState.timers.forEach(id => clearTimeout(id));
+      __songPlaybackState.timers.clear();
+    }catch(_e){}
+    try{
+      __songPlaybackState.intervals.forEach(id => clearInterval(id));
+      __songPlaybackState.intervals.clear();
+    }catch(_e){}
+    try{
+      __songPlaybackState.rafs.forEach(id => cancelAnimationFrame(id));
+      __songPlaybackState.rafs.clear();
+    }catch(_e){}
+  }
+  function __songPlaybackSleep(runId, ms){
+    return new Promise(resolve => {
+      if (runId !== __getPreviewRunId()) return resolve(false);
+      const timerId = setTimeout(() => {
+        try{ __songPlaybackState.timers.delete(timerId); }catch(_e){}
+        resolve(runId === __getPreviewRunId());
+      }, Math.max(0, ms|0));
+      __songPlaybackState.timers.add(timerId);
+    });
+  }
+  function __stopSongPlayback(opts){
+    const resetToStart = !opts || opts.resetToStart !== false;
+    __nextPreviewRunId();
+    __setIsAllPlaying(false);
+    __clearSongPlaybackAsync();
+    try{ if (playAllBtn) playAllBtn.textContent = "一曲再生"; }catch(_e){}
+    try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(_e){}
+    if (resetToStart){
+      try{ if (typeof window.__resetSongPlaybackHead === "function") window.__resetSongPlaybackHead(); }catch(_e){}
+    }
+    return __getPreviewRunId();
+  }
+  try{ window.__stopFullSongPlayback = __stopSongPlayback; }catch(_e){}
 
   if (!fileEl || !loadBtn || !trSel || !useBtn) return;
 
@@ -3648,9 +3703,9 @@ function __registerTrackAsSong(sourceId){
       const tempoMap = __getGlobalTempoEvents(__parsed);
       const t0 = performance.now();
       for (let i=0;i<notes.length;i++){
-        if (runId !== __previewRunId) return;
+        if (runId !== __getPreviewRunId()) return;
         const nn = notes[i];
-        if (runId !== __previewRunId) break;
+        if (runId !== __getPreviewRunId()) break;
         const gapTick = Number.isFinite(nn.__dtTick) ? nn.__dtTick : Math.floor((__parsed.ticksPerBeat||480)/2);
         const durTick = Number.isFinite(nn.__durTick) ? nn.__durTick : Math.max(1, Math.floor(gapTick*0.8));
         const dur = Math.max(60, Math.round(__ticksToMs(nn.__tick, nn.__tick + durTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
@@ -3658,10 +3713,12 @@ function __registerTrackAsSong(sourceId){
         const noteObj = (nn && typeof nn === "object") ? nn : { n: nn, o: parseInt(octSel.value || "4", 10) };
         const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
+        if (runId !== __getPreviewRunId()) break;
         await window.playNoteOut(playNote, dur); // note length (sound)
+        if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
-        await __sleep(gapMs); // spacing (rhythm)
-        if (runId !== __previewRunId) break;
+        const stillActive = await __songPlaybackSleep(runId, gapMs); // spacing (rhythm)
+        if (!stillActive) break;
         if (performance.now() - t0 >= 8000) break;
       }
     }catch(e){
@@ -3713,7 +3770,7 @@ async function __playAllFromTrack(runId){
       const notes = buildSongFromSource(__parsed, sourceId); // [{n,o,d,__tick,__dtTick,__durTick}]
       const tempoMap = __getGlobalTempoEvents(__parsed);
       for (let i=0;i<notes.length;i++){
-        if (runId !== __previewRunId) break;
+        if (runId !== __getPreviewRunId()) break;
         const nn = notes[i];
         const gapTick = Number.isFinite(nn.__dtTick) ? nn.__dtTick : Math.floor((__parsed.ticksPerBeat||480)/2);
         const durTick = Number.isFinite(nn.__durTick) ? nn.__durTick : Math.max(1, Math.floor(gapTick*0.8));
@@ -3721,17 +3778,20 @@ async function __playAllFromTrack(runId){
         const noteObj = (nn && typeof nn === "object") ? nn : { n: nn, o: parseInt(octSel.value || "4", 10) };
         const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
+        if (runId !== __getPreviewRunId()) break;
         await window.playNoteOut(playNote, dur);
+        if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
-        await __sleep(gapMs);
+        const stillActive = await __songPlaybackSleep(runId, gapMs);
+        if (!stillActive) break;
       }
     }catch(e){
       console.error(e);
       alert("再生失敗: " + (e && e.message ? e.message : String(e)));
     }finally{
       // reset button state if this run is the latest (or cancelled)
-      if (runId === __previewRunId){
-        __isAllPlaying = false;
+      if (runId === __getPreviewRunId()){
+        __setIsAllPlaying(false);
         if (playAllBtn) playAllBtn.textContent = "一曲再生";
       }
     }
@@ -3739,29 +3799,22 @@ async function __playAllFromTrack(runId){
 
   if (previewBtn){
     previewBtn.addEventListener("click", () => {
-      __previewRunId++;
-      __isAllPlaying = false;
-      if (playAllBtn) playAllBtn.textContent = "一曲再生";
-      try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(e){}
-      __preview8sFromTrack(__previewRunId);
+      const runId = __stopSongPlayback({ resetToStart:false });
+      __preview8sFromTrack(runId);
     });
   }
 
   if (playAllBtn){
     playAllBtn.addEventListener("click", () => {
       // toggle
-      if (__isAllPlaying){
-        __previewRunId++;
-        __isAllPlaying = false;
-        playAllBtn.textContent = "一曲再生";
-        try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(e){}
+      if (__getIsAllPlaying()){
+        __stopSongPlayback({ resetToStart:true });
         return;
       }
-      __previewRunId++;
-      __isAllPlaying = true;
+      const runId = __stopSongPlayback({ resetToStart:false });
+      __setIsAllPlaying(true);
       playAllBtn.textContent = "停止";
-      try{ if (window.__stopAllAudio) window.__stopAllAudio(); }catch(e){}
-      __playAllFromTrack(__previewRunId);
+      __playAllFromTrack(runId);
     });
   }
 useBtn.addEventListener("click", () => {
