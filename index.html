@@ -464,13 +464,17 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260320-002";
+const __APP_BUILD_ID__ = "BUILD 20260320-003"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
-window.__buildVersionLogged = window.__buildVersionLogged || false;
-window.__applyBuildVersionBadge = window.__applyBuildVersionBadge || function(){
+window.__buildVersionLogged = false;
+window.__applyBuildVersionBadge = function(){
   try{
     const badge = document.getElementById("buildBadge");
-    if (badge) badge.textContent = __APP_BUILD_ID__;
+    if (badge){
+      badge.textContent = __APP_BUILD_ID__;
+      badge.dataset.buildId = __APP_BUILD_ID__;
+      badge.title = __APP_BUILD_ID__;
+    }
     if (!window.__buildVersionLogged){
       console.log("[build/version]", __APP_BUILD_ID__);
       window.__buildVersionLogged = true;
