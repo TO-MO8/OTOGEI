@@ -464,15 +464,15 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_VERSION__ = "build: 2026-03-20 00:00 UTC / commit 4c05eec";
-window.__APP_BUILD_VERSION__ = __APP_BUILD_VERSION__;
+const __APP_BUILD_ID__ = "BUILD 20260320-002";
+window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = window.__buildVersionLogged || false;
 window.__applyBuildVersionBadge = window.__applyBuildVersionBadge || function(){
   try{
     const badge = document.getElementById("buildBadge");
-    if (badge) badge.textContent = __APP_BUILD_VERSION__;
+    if (badge) badge.textContent = __APP_BUILD_ID__;
     if (!window.__buildVersionLogged){
-      console.log("[build/version]", __APP_BUILD_VERSION__);
+      console.log("[build/version]", __APP_BUILD_ID__);
       window.__buildVersionLogged = true;
     }
   }catch(_e){}
