@@ -2533,6 +2533,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         if (h.handle && typeof h.handle === "object") h = h.handle;
         else if (h.voice && typeof h.voice === "object") h = h.voice;
         else if (h.inner && typeof h.inner === "object") h = h.inner;
+        else if (h.__resolvedHandle && typeof h.__resolvedHandle === "object") h = h.__resolvedHandle;
       }
     }catch(_){}
     if (!h || typeof h !== "object") return h;
@@ -2549,9 +2550,39 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     return h;
   }
 
+  function __adoptLiveSampleHandle(target, source, meta){
+    const t = (target && typeof target === "object") ? target : null;
+    const s = __normalizeLiveSampleHandle(source, meta);
+    if (!t || !s || typeof s !== "object") return s || t;
+    const pendingStopRequested = !!t.__pendingStopRequested;
+    const pendingStopFadeMs = t.__pendingStopFadeMs;
+    const pendingStopMeta = t.__pendingStopMeta;
+    Object.keys(t).forEach(key => {
+      if (key === "__pendingStopRequested" || key === "__pendingStopFadeMs" || key === "__pendingStopMeta") return;
+      delete t[key];
+    });
+    Object.assign(t, s);
+    t.__resolvedHandle = s;
+    t.__pendingStart = false;
+    if (pendingStopRequested){
+      t.__pendingStopRequested = true;
+      t.__pendingStopFadeMs = pendingStopFadeMs;
+      t.__pendingStopMeta = pendingStopMeta;
+    }else{
+      delete t.__pendingStopRequested;
+      delete t.__pendingStopFadeMs;
+      delete t.__pendingStopMeta;
+    }
+    return __normalizeLiveSampleHandle(t, meta);
+  }
+
   function __resolveLiveSampleHandle(handle, sample, meta){
     const direct = __normalizeLiveSampleHandle(handle, meta);
     if (direct && (direct.type === "buffer" || direct.type === "webaudio")) return direct;
+    if (direct && direct.__resolvedHandle){
+      const resolved = __normalizeLiveSampleHandle(direct.__resolvedHandle, meta);
+      if (resolved) return resolved;
+    }
     try{
       const map = window.__activeNoteVoices;
       const arr = map && sample && map.get(sample);
@@ -2560,6 +2591,12 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       if (fromVoice && (fromVoice.type === "buffer" || fromVoice.type === "webaudio")) return fromVoice;
     }catch(_){}
     return direct;
+  }
+
+  function __isLiveInputSampleMeta(meta){
+    const via = meta && meta.via;
+    const sourceType = meta && meta.sourceType;
+    return sourceType === "live" || via === "pointer" || via === "keyboard" || via === "live";
   }
 
   function __logLiveStartRoute(route, detail){
@@ -2579,6 +2616,10 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       fadeMs: fadeMs == null ? null : fadeMs,
       caller: meta && meta.caller || "__stopPianoSampleHandle"
     });
+    if (handle.type === "pending"){
+      try{ console.log("[live stop applied]", { route: __liveRouteFromHandle(handle, "sample / webaudio"), note: handle.__note || handle.note || null, via: handle.__via || null, pending: true }); }catch(_){}
+      return;
+    }
     if (handle.type === "webaudio"){
       try{
         const ctx = window.ensureAudio && window.ensureAudio();
@@ -4593,11 +4634,58 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
   // Override: play via AudioBuffer if ready, otherwise fallback to HTMLAudio pool
   window.__playPianoSample = function(note, meta){
+    const isLiveInput = __isLiveInputSampleMeta(meta);
     // If buffer ready, this is the fastest path
     const h = __playBufferNow(note, meta);
     if (h){
       try{ console.log("[live sample] __playPianoSample buffer", { note }); }catch(e){}
       return __normalizeLiveSampleHandle(h, meta);
+    }
+    // Live input keeps a stop-capable handle and waits for the stop-safe path first.
+    if (isLiveInput){
+      const pending = __normalizeLiveSampleHandle({
+        type: "pending",
+        note,
+        __note: (meta && meta.note) || note,
+        __sample: note,
+        __via: meta && meta.via,
+        __liveRoute: "sample / webaudio",
+        __pendingStart: true,
+        __pendingStartSource: "buffer-load"
+      }, meta);
+      Promise.resolve()
+        .then(() => window.__preloadPianoBuffer(note))
+        .then(buf => {
+          if (!pending.__pendingStart) return pending;
+          if (pending.__pendingStopRequested) return pending;
+          if (buf){
+            const resolved = __playBufferNow(note, meta);
+            if (resolved) return __adoptLiveSampleHandle(pending, resolved, meta);
+          }
+          const fallback = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
+          if (fallback) return __adoptLiveSampleHandle(pending, fallback, meta);
+          return pending;
+        })
+        .then(handle => {
+          const liveHandle = __normalizeLiveSampleHandle(handle, meta) || pending;
+          if (liveHandle.__pendingStopRequested){
+            liveHandle.__pendingStart = false;
+            try{ __stopPianoSampleHandle(liveHandle, liveHandle.__pendingStopFadeMs, liveHandle.__pendingStopMeta || meta); }catch(_){}
+            try{
+              const current = window.__heldSamples && window.__heldSamples.get(note);
+              if (current === liveHandle) window.__heldSamples.delete(note);
+            }catch(_){}
+            return liveHandle;
+          }
+          if (liveHandle.type === "pending"){
+            liveHandle.__pendingStart = false;
+          }
+          return liveHandle;
+        })
+        .catch(() => {
+          pending.__pendingStart = false;
+        });
+      return pending;
     }
     // If not ready yet, kick decode and fallback immediately
     try{ window.__preloadPianoBuffer(note); }catch(e){}
