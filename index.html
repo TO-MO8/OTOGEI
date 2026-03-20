@@ -2514,6 +2514,16 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     try{ console.log(`[live sample] ${tag}`, detail); }catch(_){}
   }
 
+  function __describeLiveSampleError(error){
+    return {
+      error,
+      message: error && error.message,
+      name: error && error.name,
+      stack: error && error.stack,
+      string: String(error)
+    };
+  }
+
   function __nextLiveVoiceId(){
     __liveVoiceSeq += 1;
     return `live-${__liveVoiceSeq}`;
@@ -2825,8 +2835,29 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         __startedAtPerf: performance.now()
       }, playMeta);
       window.__pendingHeldSamples.set(sample, pendingHandle);
-      __logLiveInputSample("before __playPianoSample", { sample, via: playMeta.via, note: playMeta.note, voiceId, pendingType: pendingHandle.type });
-      const h = (typeof window.__playPianoSample === "function") ? window.__playPianoSample(sample, playMeta) : null;
+      const playFnType = typeof window.__playPianoSample;
+      __logLiveInputSample("before __playPianoSample", {
+        sample,
+        sampleName: sample,
+        note: playMeta.note,
+        via: playMeta.via,
+        liveInput: __isLiveInputSampleMeta(playMeta),
+        voiceId,
+        pendingType: pendingHandle.type,
+        playFnType,
+        args: { note: sample, meta: playMeta }
+      });
+      if (playFnType !== "function"){
+        __logLiveInputSample("start early return (__playPianoSample unavailable)", {
+          sample,
+          sampleName: sample,
+          note: playMeta.note,
+          via: playMeta.via,
+          playFnType,
+          playFnValue: window.__playPianoSample
+        });
+      }
+      const h = (playFnType === "function") ? window.__playPianoSample(sample, playMeta) : null;
       __logLiveInputSample("after __playPianoSample", {
         sample,
         via: playMeta.via,
@@ -2865,7 +2896,11 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
             return finalized || resolved;
           })
           .catch(err => {
-            __logLiveInputSample("start early return (__readyPromise rejected)", { sample, via: playMeta.via, note: playMeta.note, error: String((err && err.message) || err || "unknown") });
+            __logLiveInputSample("start early return (__readyPromise rejected)", Object.assign({
+              sample,
+              via: playMeta.via,
+              note: playMeta.note
+            }, __describeLiveSampleError(err)));
             try{
               const currentPending = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
               if (currentPending === pendingHandle) window.__pendingHeldSamples.delete(sample);
@@ -2877,7 +2912,11 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       __logLiveStartRoute("sample / no-handle", { via: meta && meta.via, note: meta && meta.note, sample });
       __logLiveInputSample("start early return (no handle / no readyPromise)", { sample, via: meta && meta.via, note: meta && meta.note });
     }catch(err){
-      __logLiveInputSample("start early return (exception)", { sample, via: meta && meta.via, note: meta && meta.note, error: String((err && err.message) || err || "unknown") });
+      __logLiveInputSample("start early return (exception)", Object.assign({
+        sample,
+        via: meta && meta.via,
+        note: meta && meta.note
+      }, __describeLiveSampleError(err)));
       try{
         const currentPending = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
         if (currentPending && currentPending === pendingHandle) window.__pendingHeldSamples.delete(sample);
@@ -4738,16 +4777,16 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
   // Override: play via AudioBuffer if ready, otherwise fallback to HTMLAudio pool
   window.__playPianoSample = function(note, meta){
-    const isLiveInput = __isLiveInputSampleMeta(meta);
     try{
       console.log("[live sample] __playPianoSample enter", {
         note,
         via: meta && meta.via,
         sourceType: meta && meta.sourceType,
-        isLiveInput,
+        isLiveInput: __isLiveInputSampleMeta(meta),
         callPerf: meta && meta.callPerf
       });
     }catch(_){ }
+    const isLiveInput = __isLiveInputSampleMeta(meta);
     // If buffer ready, this is the fastest path
     const h = __playBufferNow(note, meta);
     if (h){
