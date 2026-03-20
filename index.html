@@ -199,9 +199,23 @@ button, select, input[type="file"]{
   
     /* hide mode selector */
     .modeRow{ display:none !important; }
+    .buildBadge{
+      position:fixed; top:10px; right:10px; z-index:9998;
+      padding:8px 10px; border-radius:12px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(6,10,24,.82); color:rgba(255,255,255,.88);
+      box-shadow:0 10px 28px rgba(0,0,0,.28);
+      font-size:11px; font-weight:900; line-height:1.35; letter-spacing:.02em;
+      backdrop-filter: blur(8px);
+      max-width:min(48vw, 320px); word-break:break-word;
+    }
+    @media (max-width:860px){
+      .buildBadge{top:8px; right:8px; max-width:calc(100vw - 16px); font-size:10px; padding:7px 9px;}
+    }
   </style>
 </head>
 <body>
+  <div id="buildBadge" class="buildBadge" aria-label="build version"></div>
   <div class="app">
     <div class="card">
       <div class="header">
@@ -449,6 +463,14 @@ window.sampleCache = window.sampleCache || new Map();
 // 互換：sampleBufCache名でも参照できるようにする
 window.sampleBufCache = window.sampleCache;
 
+
+const __APP_BUILD_VERSION__ = "build: 2026-03-20 00:00 UTC / commit 4c05eec";
+window.__APP_BUILD_VERSION__ = __APP_BUILD_VERSION__;
+try{
+  const badge = document.getElementById("buildBadge");
+  if (badge) badge.textContent = __APP_BUILD_VERSION__;
+  console.log("[build/version]", __APP_BUILD_VERSION__);
+}catch(_e){}
 
 // === Global audio bootstrap (safe) ===
 window.masterOn = (typeof window.masterOn==="boolean") ? window.masterOn : true;
@@ -2464,6 +2486,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   const __heldByPointer = new Map(); // pointerId -> { el, note, sample }
   const __heldByKey = new Map();     // key -> sample (for keyboard input)
   window.__heldSamples = window.__heldSamples || new Map(); // sample -> handle
+  window.__pendingHeldSamples = window.__pendingHeldSamples || new Map(); // sample -> pending handle
   const __LIVE_INPUT_SAMPLE_LOG__ = true;
   const __MIN_INPUT_SAMPLE_MS__ = 0;
   const __MIN_INPUT_SAMPLE_HTML_MS__ = 0;
@@ -2731,11 +2754,34 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     }catch(_){ }
   };
 
+  function __finalizeHeldSampleStart(sample, pendingHandle, handle, meta){
+    const pendingMap = window.__pendingHeldSamples;
+    const heldMap = window.__heldSamples;
+    const liveHandle = __resolveLiveSampleHandle(handle, sample, meta);
+    if (!liveHandle || liveHandle.type === "pending") return null;
+    liveHandle.__liveRoute = __liveRouteFromHandle(liveHandle, liveHandle.type === "html" ? "sample / html audio" : "sample / webaudio");
+    liveHandle.__startedAtPerf = (pendingHandle && pendingHandle.__startedAtPerf) || liveHandle.__startedAtPerf || performance.now();
+    liveHandle.__sample = sample;
+    liveHandle.__via = (meta && meta.via) || liveHandle.__via;
+    liveHandle.__note = (meta && meta.note) || liveHandle.__note;
+    try{ if (pendingMap && pendingMap.get(sample) === pendingHandle) pendingMap.delete(sample); }catch(_){ }
+    try{ heldMap && heldMap.set(sample, liveHandle); }catch(_){ }
+    __logLiveVoice("start request", liveHandle, { phase:"handle-ready" });
+    __logLiveStartRoute(liveHandle.__liveRoute, { via: liveHandle.__via, note: liveHandle.__note, sample });
+    __logLiveInputSample("start ok", { sample, via: liveHandle.__via, note: liveHandle.__note, handleType: liveHandle.type || typeof liveHandle });
+    if (pendingHandle && pendingHandle.__pendingStopRequested){
+      __stopHeldSample(sample, pendingHandle.__pendingStopFadeMs, pendingHandle.__pendingStopMeta || meta);
+    }
+    return liveHandle;
+  }
+
   function __startHeldSample(sample, meta){
     if (!sample) return;
-    const existing = window.__heldSamples && window.__heldSamples.get(sample);
-    if (existing){
-      __logLiveInputSample("start skip (already held)", { sample, via: meta && meta.via, note: meta && meta.note, pending: !!existing.__pendingStart });
+    const heldHandle = window.__heldSamples && window.__heldSamples.get(sample);
+    const pendingHandleExisting = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
+    if (heldHandle || pendingHandleExisting){
+      const existing = heldHandle || pendingHandleExisting;
+      __logLiveInputSample("start skip (already held)", { sample, via: meta && meta.via, note: meta && meta.note, pending: !!(existing && existing.__pendingStart) });
       return;
     }
     let pendingHandle = null;
@@ -2755,45 +2801,56 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         __pendingStart: true,
         __startedAtPerf: performance.now()
       }, playMeta);
-      window.__heldSamples.set(sample, pendingHandle);
+      window.__pendingHeldSamples.set(sample, pendingHandle);
       const h = (typeof window.__playPianoSample === "function") ? window.__playPianoSample(sample, playMeta) : null;
-      const liveHandle = __resolveLiveSampleHandle(h, sample, playMeta);
-      if (liveHandle){
-        liveHandle.__liveRoute = __liveRouteFromHandle(liveHandle, liveHandle.type === "html" ? "sample / html audio" : "sample / webaudio");
-        liveHandle.__startedAtPerf = pendingHandle.__startedAtPerf || performance.now();
-        liveHandle.__sample = sample;
-        liveHandle.__via = meta && meta.via;
-        liveHandle.__note = meta && meta.note;
-        window.__heldSamples.set(sample, liveHandle);
-        __logLiveVoice("start request", liveHandle, { phase:"handle-ready" });
-        __logLiveStartRoute(liveHandle.__liveRoute, { via: liveHandle.__via, note: liveHandle.__note, sample });
-        __logLiveInputSample("start ok", { sample, via: liveHandle.__via, note: liveHandle.__note, handleType: liveHandle.type || typeof liveHandle });
-        if (pendingHandle.__pendingStopRequested){
-          __stopHeldSample(sample, pendingHandle.__pendingStopFadeMs, pendingHandle.__pendingStopMeta || meta);
-        }
-      }else{
-        try{ window.__heldSamples.delete(sample); }catch(_){ }
-        __logLiveStartRoute("sample / no-handle", { via: meta && meta.via, note: meta && meta.note, sample });
-        __logLiveInputSample("start no handle", { sample, via: meta && meta.via, note: meta && meta.note });
+      const liveHandle = __finalizeHeldSampleStart(sample, pendingHandle, h, playMeta);
+      if (liveHandle) return liveHandle;
+      const readyPromise = h && h.__readyPromise;
+      if (readyPromise && typeof readyPromise.then === "function"){
+        readyPromise
+          .then(resolved => {
+            const currentPending = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
+            if (!currentPending || currentPending !== pendingHandle) return resolved;
+            const finalized = __finalizeHeldSampleStart(sample, pendingHandle, resolved, playMeta);
+            if (!finalized){
+              try{ if (window.__pendingHeldSamples.get(sample) === pendingHandle) window.__pendingHeldSamples.delete(sample); }catch(_){ }
+              __logLiveStartRoute("sample / no-handle", { via: meta && meta.via, note: meta && meta.note, sample });
+              __logLiveInputSample("start no handle", { sample, via: meta && meta.via, note: meta && meta.note });
+            }
+            return finalized || resolved;
+          })
+          .catch(() => {
+            try{
+              const currentPending = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
+              if (currentPending === pendingHandle) window.__pendingHeldSamples.delete(sample);
+            }catch(_){ }
+          });
+        return pendingHandle;
       }
+      try{ if (window.__pendingHeldSamples.get(sample) === pendingHandle) window.__pendingHeldSamples.delete(sample); }catch(_){ }
+      __logLiveStartRoute("sample / no-handle", { via: meta && meta.via, note: meta && meta.note, sample });
+      __logLiveInputSample("start no handle", { sample, via: meta && meta.via, note: meta && meta.note });
     }catch(_){
       try{
-        const current = window.__heldSamples && window.__heldSamples.get(sample);
-        if (current && current === pendingHandle) window.__heldSamples.delete(sample);
+        const currentPending = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
+        if (currentPending && currentPending === pendingHandle) window.__pendingHeldSamples.delete(sample);
       }catch(__){}
     }
   }
 
   function __stopHeldSample(sample, fadeMs, meta){
-    const rawHandle = window.__heldSamples && window.__heldSamples.get(sample);
-    if (rawHandle && rawHandle.__pendingStart){
-      rawHandle.__pendingStopRequested = true;
-      rawHandle.__pendingStopFadeMs = fadeMs;
-      rawHandle.__pendingStopMeta = Object.assign({}, meta);
-      __logLiveStopRoute("sample / pending-handle", { sample, via: meta && meta.via, note: meta && meta.note });
-      return;
+    const heldHandle = window.__heldSamples && window.__heldSamples.get(sample);
+    if (!heldHandle){
+      const pendingHandle = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
+      if (pendingHandle && pendingHandle.__pendingStart){
+        pendingHandle.__pendingStopRequested = true;
+        pendingHandle.__pendingStopFadeMs = fadeMs;
+        pendingHandle.__pendingStopMeta = Object.assign({}, meta);
+        __logLiveStopRoute("sample / pending-handle", { sample, via: meta && meta.via, note: meta && meta.note });
+        return;
+      }
     }
-    const h = __resolveLiveSampleHandle(rawHandle, sample, meta);
+    const h = __resolveLiveSampleHandle(heldHandle, sample, meta);
     if (!h){
       __logLiveStopRoute("missing-handle", { sample, via: meta && meta.via, note: meta && meta.note });
       return;
@@ -4653,37 +4710,23 @@ window.addEventListener("DOMContentLoaded", ()=>{
         __pendingStart: true,
         __pendingStartSource: "buffer-load"
       }, meta);
-      Promise.resolve()
+      pending.__readyPromise = Promise.resolve()
         .then(() => window.__preloadPianoBuffer(note))
         .then(buf => {
-          if (!pending.__pendingStart) return pending;
-          if (pending.__pendingStopRequested) return pending;
-          if (buf){
-            const resolved = __playBufferNow(note, meta);
-            if (resolved) return __adoptLiveSampleHandle(pending, resolved, meta);
-          }
-          const fallback = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
-          if (fallback) return __adoptLiveSampleHandle(pending, fallback, meta);
-          return pending;
+          let resolved = null;
+          if (buf) resolved = __playBufferNow(note, meta);
+          if (!resolved) resolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
+          if (!resolved) return null;
+          return __adoptLiveSampleHandle(pending, resolved, meta);
         })
         .then(handle => {
-          const liveHandle = __normalizeLiveSampleHandle(handle, meta) || pending;
-          if (liveHandle.__pendingStopRequested){
-            liveHandle.__pendingStart = false;
-            try{ __stopPianoSampleHandle(liveHandle, liveHandle.__pendingStopFadeMs, liveHandle.__pendingStopMeta || meta); }catch(_){}
-            try{
-              const current = window.__heldSamples && window.__heldSamples.get(note);
-              if (current === liveHandle) window.__heldSamples.delete(note);
-            }catch(_){}
-            return liveHandle;
-          }
-          if (liveHandle.type === "pending"){
-            liveHandle.__pendingStart = false;
-          }
-          return liveHandle;
+          pending.__pendingStart = false;
+          const liveHandle = __normalizeLiveSampleHandle(handle, meta);
+          return (liveHandle && liveHandle.type !== "pending") ? liveHandle : null;
         })
         .catch(() => {
           pending.__pendingStart = false;
+          return null;
         });
       return pending;
     }
