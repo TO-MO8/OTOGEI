@@ -4347,9 +4347,9 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const nowCtx = ctx.currentTime;
       const startAt = nowCtx;
       const isLive = !meta || meta.via === "pointer" || meta.via === "keyboard" || meta.via === "live";
-      const trimMs = isLive ? 4 : 0;
+      const trimMs = isLive ? 3 : 0;
       const trimSec = Math.max(0, Math.min(buf.duration - 0.001, trimMs / 1000));
-      const attackMs = isLive ? 1.5 : 2.0;
+      const attackMs = isLive ? 1.8 : 2.0;
       const attackEndAt = startAt + (attackMs / 1000);
       const eventPerf = Number(meta && meta.eventPerf);
       const callPerf = Number(meta && meta.callPerf);
