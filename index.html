@@ -2692,22 +2692,34 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
 
   function __startHeldSample(sample, meta){
     if (!sample) return;
-    if (window.__heldSamples.has(sample)){
-      __logLiveInputSample("start skip (already held)", { sample, via: meta && meta.via, note: meta && meta.note });
+    const existing = window.__heldSamples && window.__heldSamples.get(sample);
+    if (existing){
+      __logLiveInputSample("start skip (already held)", { sample, via: meta && meta.via, note: meta && meta.note, pending: !!existing.__pendingStart });
       return;
     }
+    let pendingHandle = null;
     try{
       const eventPerf = Number(meta && meta.eventPerf);
       const callPerf = performance.now();
       const voiceId = (meta && meta.voiceId) || __nextLiveVoiceId();
       __logLiveInputSample("start request", { sample, via: meta && meta.via, note: meta && meta.note, voiceId, fn: "__playPianoSample" });
       if (Number.isFinite(eventPerf)) console.log("[live sample] pointerdown_to_play_call_ms", Number((callPerf - eventPerf).toFixed(3)));
-      const playMeta = Object.assign({}, meta, { callPerf, sample, voiceId });
+      const playMeta = Object.assign({}, meta, { callPerf, sample, voiceId, sourceType: (meta && meta.sourceType) || "live" });
+      pendingHandle = __normalizeLiveSampleHandle({
+        type: "pending",
+        note: sample,
+        __note: meta && meta.note,
+        __via: meta && meta.via,
+        __sample: sample,
+        __pendingStart: true,
+        __startedAtPerf: performance.now()
+      }, playMeta);
+      window.__heldSamples.set(sample, pendingHandle);
       const h = (typeof window.__playPianoSample === "function") ? window.__playPianoSample(sample, playMeta) : null;
       const liveHandle = __resolveLiveSampleHandle(h, sample, playMeta);
       if (liveHandle){
-        liveHandle.__liveRoute = __liveRouteFromHandle(liveHandle, "sample");
-        liveHandle.__startedAtPerf = performance.now();
+        liveHandle.__liveRoute = __liveRouteFromHandle(liveHandle, liveHandle.type === "html" ? "sample / html audio" : "sample / webaudio");
+        liveHandle.__startedAtPerf = pendingHandle.__startedAtPerf || performance.now();
         liveHandle.__sample = sample;
         liveHandle.__via = meta && meta.via;
         liveHandle.__note = meta && meta.note;
@@ -2715,15 +2727,31 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         __logLiveVoice("start request", liveHandle, { phase:"handle-ready" });
         __logLiveStartRoute(liveHandle.__liveRoute, { via: liveHandle.__via, note: liveHandle.__note, sample });
         __logLiveInputSample("start ok", { sample, via: liveHandle.__via, note: liveHandle.__note, handleType: liveHandle.type || typeof liveHandle });
+        if (pendingHandle.__pendingStopRequested){
+          __stopHeldSample(sample, pendingHandle.__pendingStopFadeMs, pendingHandle.__pendingStopMeta || meta);
+        }
       }else{
+        try{ window.__heldSamples.delete(sample); }catch(_){ }
         __logLiveStartRoute("sample / no-handle", { via: meta && meta.via, note: meta && meta.note, sample });
         __logLiveInputSample("start no handle", { sample, via: meta && meta.via, note: meta && meta.note });
       }
-    }catch(_){}
+    }catch(_){
+      try{
+        const current = window.__heldSamples && window.__heldSamples.get(sample);
+        if (current && current === pendingHandle) window.__heldSamples.delete(sample);
+      }catch(__){}
+    }
   }
 
   function __stopHeldSample(sample, fadeMs, meta){
     const rawHandle = window.__heldSamples && window.__heldSamples.get(sample);
+    if (rawHandle && rawHandle.__pendingStart){
+      rawHandle.__pendingStopRequested = true;
+      rawHandle.__pendingStopFadeMs = fadeMs;
+      rawHandle.__pendingStopMeta = Object.assign({}, meta);
+      __logLiveStopRoute("sample / pending-handle", { sample, via: meta && meta.via, note: meta && meta.note });
+      return;
+    }
     const h = __resolveLiveSampleHandle(rawHandle, sample, meta);
     if (!h){
       __logLiveStopRoute("missing-handle", { sample, via: meta && meta.via, note: meta && meta.note });
@@ -2753,7 +2781,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       waitMs: Math.round(waitMs)
     });
     __logLiveVoice("held sample delete", h, { action:"heldSamples.delete", stopSeq, sample });
-    try{ window.__heldSamples.delete(sample); }catch(_){}
+    try{ window.__heldSamples.delete(sample); }catch(_){ }
     const runner = () => {
       __logLiveInputSample("stop exec", {
         sample,
@@ -2841,10 +2869,15 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (!el) return;
 
     // prevent duplicate fire (pointerdown + synthetic events)
-    try{ e.preventDefault(); }catch(_){}
-    try{ e.stopPropagation(); }catch(_){}
-    try{ e.stopImmediatePropagation(); }catch(_){}
-    try{ ensureAudio(); }catch(_){}
+    try{ e.preventDefault(); }catch(_){ }
+    try{ e.stopPropagation(); }catch(_){ }
+    try{ e.stopImmediatePropagation(); }catch(_){ }
+    try{ ensureAudio(); }catch(_){ }
+
+    if (__heldByPointer.has(e.pointerId)){
+      __logLiveInputSample("pointerdown skip (pointer already held)", { pointerId: e.pointerId, note: el.dataset.note });
+      return;
+    }
 
     // Debounce per element
     const now = performance.now();
@@ -4245,25 +4278,40 @@ useBtn.addEventListener("click", () => {
   window.__playPianoSample = function(note, meta){
     if(!pool.has(note)) window.__preloadPianoSample(note);
 
-    const entry = pool.get(note);
-    if(!entry) return;
-
+    let entry = pool.get(note);
     const url = __noteUrl(note);
+    if (!entry){
+      const a = makeAudio(url);
+      entry = { list:[a], idx:0 };
+      pool.set(note, entry);
+    }
+
     if(__LOG_SAMPLE_URL__) console.log("[SAMPLE URL]", url);
 
-    const a = entry.list[entry.idx];
-    entry.idx = (entry.idx + 1) % entry.list.length;
+    let a = entry.list[entry.idx];
+    if (!a){
+      a = makeAudio(url);
+      entry.list[entry.idx] = a;
+    }
+    entry.idx = (entry.idx + 1) % Math.max(1, entry.list.length);
 
+    const handle = __normalizeLiveSampleHandle({ type:"html", audio:a, note, __liveRoute:"sample / html audio" }, meta);
     try{
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)) return null;
-      a.pause();
-      a.currentTime = 0;
+      try{ a.pause(); }catch(_){ }
+      try{ a.currentTime = 0; }catch(_){ }
       a.volume = 1.0;
-      a.play().catch(err => console.warn("[sample play blocked]", err));
+      try{
+        const p = a.play();
+        if (p && typeof p.catch === "function") p.catch(err => console.warn("[sample play blocked]", err));
+      }catch(err){
+        console.warn("[sample play error]", err);
+      }
       try{ console.log("[live sample] __playPianoSample html", { note, url }); }catch(e){}
-      return { type:"html", audio:a, note };
+      return handle;
     }catch(e){
       console.warn("[sample play error]", e);
+      return handle;
     }
   };
 
