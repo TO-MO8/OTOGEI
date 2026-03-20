@@ -958,7 +958,11 @@ function unlockAudio(){
 
     const intended = Math.max(1.05, durMs/1000 + 0.65);
     const bufDur = readyBuf.duration / Math.max(0.1, rate);
-    srcNode.stop(start + Math.min(bufDur, intended));
+    const stopAt = start + Math.min(bufDur, intended);
+    srcNode.stop(stopAt);
+    if (opts && opts.holdToStop){
+      return { type:"webaudio", gain, sources:[srcNode], note:`${noteName}${octave}` };
+    }
     return true;
   }
   // --- end GM-ish piano ---
@@ -1060,6 +1064,9 @@ function synthPiano(freq, durMs=420, vel=0.9, opts={}){
     o1.start(t0); o2.start(t0); o3.start(t0);
     const stopAt = t0 + dur + 0.05;
     o1.stop(stopAt); o2.stop(stopAt); o3.stop(stopAt);
+    if (opts && opts.holdToStop){
+      return { type:"webaudio", gain:g, sources:[o1, o2, o3, noise], note: opts.note || null };
+    }
   }
   // Sample player (WebAudio: low-latency)
 // Place files like: assets/piano/C4.mp3 ... B4.mp3 (or wav/ogg)
@@ -2461,6 +2468,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   const __MIN_INPUT_SAMPLE_MS__ = 24;
   const __MIN_INPUT_SAMPLE_HTML_MS__ = 80;
   const __LIVE_INPUT_RELEASE_MS__ = 4;
+  const __LIVE_INPUT_WEB_AUDIO_RELEASE_MS__ = 12;
 
   function __sampleNameFromNote(noteName, oct){
     return noteKey(noteName, oct).replace(/#/g,"s");
@@ -2473,6 +2481,27 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
 
   function __stopPianoSampleHandle(handle, fadeMs){
     if (!handle) return;
+    if (handle.type === "webaudio"){
+      try{
+        const ctx = window.ensureAudio && window.ensureAudio();
+        if (ctx && handle.gain){
+          const t = ctx.currentTime;
+          const dur = Math.max(0.006, (fadeMs==null?__LIVE_INPUT_WEB_AUDIO_RELEASE_MS__:fadeMs)/1000);
+          handle.gain.gain.cancelScheduledValues(t);
+          const cur = Math.max(0.0001, handle.gain.gain.value || 0.0001);
+          handle.gain.gain.setValueAtTime(cur, t);
+          handle.gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+          (handle.sources || []).forEach(src => {
+            try{ src.stop(t + dur + 0.01); }catch(_){}
+          });
+        }else{
+          (handle.sources || []).forEach(src => {
+            try{ src.stop(); }catch(_){}
+          });
+        }
+      }catch(_){}
+      return;
+    }
     if (handle.type === "buffer"){
       try{
         const ctx = window.ensureAudio && window.ensureAudio();
@@ -2571,6 +2600,36 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     else runner();
   }
 
+  function __startHeldLiveNote(note, meta){
+    if (!note) return;
+    const holdKey = `${(meta && meta.via) || "live"}:${note}`;
+    if (window.__heldSamples.has(holdKey)){
+      __stopHeldSample(holdKey, __LIVE_INPUT_WEB_AUDIO_RELEASE_MS__, { via:(meta && meta.via) || "live", note, immediate:true });
+    }
+    let h = null;
+    try{
+      if (soundMode === "gmpiano"){
+        h = playGmPiano(note, octave, 420, 0.95, Object.assign({}, meta, { sourceType:"live", holdToStop:true }));
+      }else if (soundMode === "synth"){
+        const m = midiFromNote(note, octave);
+        h = synthPiano(freqFromMidi(m), 420, 0.95, Object.assign({}, meta, { sourceType:"live", holdToStop:true, note }));
+      }else if (soundMode === "beep"){
+        const m = midiFromNote(note, octave);
+        beep(freqFromMidi(m), 0.12, 0.05, Object.assign({}, meta, { sourceType:"live" }));
+        return holdKey;
+      }else{
+        try{ playNoteOut(note, 180, Object.assign({}, meta, { sourceType:"live" })); }catch(_){}
+        return holdKey;
+      }
+    }catch(_){}
+    if (!h) return holdKey;
+    h.__startedAtPerf = performance.now();
+    h.__via = meta && meta.via;
+    h.__note = note;
+    window.__heldSamples.set(holdKey, h);
+    return holdKey;
+  }
+
   function __releaseAllHeld(){
     try{
       const m = window.__heldSamples;
@@ -2613,7 +2672,10 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       try{ el.setPointerCapture(e.pointerId); }catch(_){}
       el.classList.add("held");
     }else{
-      try{ playNoteOut(note, 180, { sourceType:"live" }); }catch(_){}
+      const holdKey = __startHeldLiveNote(note, { via:"pointer", eventPerf: Number(e.timeStamp) });
+      __heldByPointer.set(e.pointerId, { el, note, sample: holdKey });
+      try{ el.setPointerCapture(e.pointerId); }catch(_){}
+      el.classList.add("held");
     }
 
     // Game input (one-shot)
@@ -2635,6 +2697,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   keysSharpWrap.addEventListener("pointerup", onAnyKeyPointerUp, { passive:true });
   keysWrap.addEventListener("pointercancel", onAnyKeyPointerUp, { passive:true });
   keysSharpWrap.addEventListener("pointercancel", onAnyKeyPointerUp, { passive:true });
+  window.addEventListener("pointerup", onAnyKeyPointerUp, { passive:true });
+  window.addEventListener("pointercancel", onAnyKeyPointerUp, { passive:true });
 
   // Block synthetic click that follows pointerdown on some platforms (prevents double-trigger).
   let __lastKeyPointerDownMs = 0;
@@ -2670,7 +2734,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         __heldByKey.set(k, sample);
         __startHeldSample(sample, { via:"keyboard", note });
       }else{
-        try{ playNoteOut(note, 180, { sourceType:"live" }); }catch(_){}
+        __heldByKey.set(k, __startHeldLiveNote(note, { via:"keyboard" }));
       }
       onPressNote(note);
       return;
@@ -2686,7 +2750,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         __heldByKey.set(low, sample);
         __startHeldSample(sample, { via:"keyboard", note });
       }else{
-        try{ playNoteOut(note, 180, { sourceType:"live" }); }catch(_){}
+        __heldByKey.set(low, __startHeldLiveNote(note, { via:"keyboard" }));
       }
       onPressNote(note);
       return;
