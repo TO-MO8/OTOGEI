@@ -2469,6 +2469,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   const __MIN_INPUT_SAMPLE_HTML_MS__ = 0;
   const __LIVE_INPUT_RELEASE_MS__ = 18;
   const __LIVE_INPUT_WEB_AUDIO_RELEASE_MS__ = 22;
+  let __liveVoiceSeq = 0;
+  let __liveStopSeq = 0;
 
   function __sampleNameFromNote(noteName, oct){
     return noteKey(noteName, oct).replace(/#/g,"s");
@@ -2477,6 +2479,41 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   function __logLiveInputSample(tag, detail){
     if (!__LIVE_INPUT_SAMPLE_LOG__ || soundMode !== "sample") return;
     try{ console.log(`[live sample] ${tag}`, detail); }catch(_){}
+  }
+
+  function __nextLiveVoiceId(){
+    __liveVoiceSeq += 1;
+    return `live-${__liveVoiceSeq}`;
+  }
+
+  function __nextLiveStopSeq(){
+    __liveStopSeq += 1;
+    return `stop-${__liveStopSeq}`;
+  }
+
+  function __ensureLiveVoiceMeta(handle, meta){
+    if (!handle || typeof handle !== "object") return handle;
+    if (meta && meta.voiceId && !handle.__voiceId) handle.__voiceId = meta.voiceId;
+    if (!handle.__voiceId) handle.__voiceId = __nextLiveVoiceId();
+    if (meta && meta.stopSeq && !handle.__stopSeq) handle.__stopSeq = meta.stopSeq;
+    if (meta && meta.note && !handle.__note) handle.__note = meta.note;
+    if (meta && meta.via && !handle.__via) handle.__via = meta.via;
+    if (meta && meta.sample && !handle.__sample) handle.__sample = meta.sample;
+    return handle;
+  }
+
+  function __logLiveVoice(tag, handle, detail){
+    if (!__LIVE_INPUT_SAMPLE_LOG__) return;
+    const h = handle && typeof handle === "object" ? handle : null;
+    const payload = Object.assign({
+      voiceId: h && h.__voiceId || null,
+      stopSeq: h && h.__stopSeq || null,
+      route: h ? __liveRouteFromHandle(h, "unknown") : "unknown",
+      note: h && (h.__note || h.note) || null,
+      via: h && h.__via || null,
+      sample: h && h.__sample || null
+    }, detail || {});
+    try{ console.log(`[live voice] ${tag}`, payload); }catch(_){}
   }
 
   function __liveRouteFromHandle(handle, fallback){
@@ -2508,6 +2545,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (!h.__note && meta && meta.note) h.__note = meta.note;
     if (!h.__via && meta && meta.via) h.__via = meta.via;
     if (!h.__liveRoute) h.__liveRoute = __liveRouteFromHandle(h, "sample");
+    __ensureLiveVoiceMeta(h, meta);
     return h;
   }
 
@@ -2532,9 +2570,15 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     try{ console.log(`[live stop route: ${route}]`, detail || {}); }catch(_){}
   }
 
-  function __stopPianoSampleHandle(handle, fadeMs){
-    handle = __normalizeLiveSampleHandle(handle);
+  function __stopPianoSampleHandle(handle, fadeMs, meta){
+    handle = __normalizeLiveSampleHandle(handle, meta);
     if (!handle) return;
+    __ensureLiveVoiceMeta(handle, meta);
+    if (meta && meta.stopSeq) handle.__stopSeq = meta.stopSeq;
+    __logLiveVoice("stop handler enter", handle, {
+      fadeMs: fadeMs == null ? null : fadeMs,
+      caller: meta && meta.caller || "__stopPianoSampleHandle"
+    });
     if (handle.type === "webaudio"){
       try{
         const ctx = window.ensureAudio && window.ensureAudio();
@@ -2546,14 +2590,23 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
           if (typeof gainParam.cancelAndHoldAtTime === "function") gainParam.cancelAndHoldAtTime(t);
           else gainParam.cancelScheduledValues(t);
           const cur = Math.max(0.0001, gainParam.value || 0.0001);
+          __logLiveVoice("gain fade start", handle, { currentTime: t, currentGain: cur, fadeMs: dur * 1000 });
           gainParam.setValueAtTime(cur, t);
+          __logLiveVoice("gain ramp end time", handle, { rampEndTime: t + dur });
           gainParam.linearRampToValueAtTime(0.0001, t + dur);
           (handle.sources || []).forEach(src => {
-            try{ src.stop(stopAt); }catch(_){}
+            try{
+              __logLiveVoice("source.stop scheduled time", handle, { stopAt, sourceType: src && src.constructor && src.constructor.name || typeof src });
+              __logLiveVoice("source.stop actual call", handle, { stopAt, sourceType: src && src.constructor && src.constructor.name || typeof src });
+              src.stop(stopAt);
+            }catch(_){}
           });
         }else{
           (handle.sources || []).forEach(src => {
-            try{ src.stop(); }catch(_){}
+            try{
+              __logLiveVoice("source.stop actual call", handle, { stopAt: null, sourceType: src && src.constructor && src.constructor.name || typeof src });
+              src.stop();
+            }catch(_){}
           });
         }
         try{ console.log("[live stop applied]", { route: __liveRouteFromHandle(handle, "webaudio"), note: handle.__note || handle.note || null, via: handle.__via || null }); }catch(_){}
@@ -2572,10 +2625,15 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
           if (typeof gainParam.cancelAndHoldAtTime === "function") gainParam.cancelAndHoldAtTime(t);
           else gainParam.cancelScheduledValues(t);
           const cur = Math.max(0.0001, gainParam.value || 0.0001);
+          __logLiveVoice("gain fade start", handle, { currentTime: t, currentGain: cur, fadeMs: dur * 1000 });
           gainParam.setValueAtTime(cur, t);
+          __logLiveVoice("gain ramp end time", handle, { rampEndTime: t + dur });
           gainParam.linearRampToValueAtTime(0.0001, t + dur);
+          __logLiveVoice("source.stop scheduled time", handle, { stopAt, sourceType: handle.src && handle.src.constructor && handle.src.constructor.name || typeof handle.src });
+          __logLiveVoice("source.stop actual call", handle, { stopAt, sourceType: handle.src && handle.src.constructor && handle.src.constructor.name || typeof handle.src });
           handle.src.stop(stopAt);
         }else if (handle.src){
+          __logLiveVoice("source.stop actual call", handle, { stopAt: null, sourceType: handle.src && handle.src.constructor && handle.src.constructor.name || typeof handle.src });
           try{ handle.src.stop(); }catch(_){}
         }
         try{ console.log("[live stop applied]", { route: __liveRouteFromHandle(handle, "sample / webaudio"), note: handle.__note || handle.note || null, via: handle.__via || null }); }catch(_){}
@@ -2598,11 +2656,12 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       try{ console.log(`[live stop note voices] note=${note} count=${count}`); }catch(_){}
       if (!count) return 0;
       const list = arr.slice();
+      list.forEach(v => __logLiveVoice("note voices delete / cleanup", v, { action:"map-delete-before-stop", note }));
       try{ map.delete(note); }catch(_){}
       list.forEach(v => {
         try{
           if (v && typeof v === "object") v.__liveKilled = true;
-          __stopPianoSampleHandle(v, fadeMs);
+          __stopPianoSampleHandle(v, fadeMs, { caller:"__killLiveNoteVoices", stopSeq: v && v.__stopSeq || null, note });
           console.log(`[live voice killed] note=${note} route=${__liveRouteFromHandle(v, route || "sample / webaudio")}`);
         }catch(_){}
       });
@@ -2617,14 +2676,14 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   window.__stopActivePianoSamples = function(){
     try{
       const hs = window.__activePianoSampleHandles;
-      if (hs && typeof hs.forEach === "function") hs.forEach(h => { try{ __stopPianoSampleHandle(h, 0); }catch(_){} });
+      if (hs && typeof hs.forEach === "function") hs.forEach(h => { try{ __stopPianoSampleHandle(h, 0, { caller:"__stopActivePianoSamples:activePianoSampleHandles" }); }catch(_){} });
       if (hs && typeof hs.clear === "function") hs.clear();
     }catch(_){ }
     try{
       const voices = window.__activeNoteVoices;
       if (voices && typeof voices.forEach === "function"){
         voices.forEach(arr => {
-          (arr || []).slice().forEach(v => { try{ __stopPianoSampleHandle(v, 0); }catch(_){} });
+          (arr || []).slice().forEach(v => { try{ __stopPianoSampleHandle(v, 0, { caller:"__stopActivePianoSamples:activeNoteVoices", stopSeq: v && v.__stopSeq || null }); }catch(_){} });
         });
         if (typeof voices.clear === "function") voices.clear();
       }
@@ -2640,11 +2699,12 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     try{
       const eventPerf = Number(meta && meta.eventPerf);
       const callPerf = performance.now();
-      __logLiveInputSample("start request", { sample, via: meta && meta.via, note: meta && meta.note, fn: "__playPianoSample" });
+      const voiceId = (meta && meta.voiceId) || __nextLiveVoiceId();
+      __logLiveInputSample("start request", { sample, via: meta && meta.via, note: meta && meta.note, voiceId, fn: "__playPianoSample" });
       if (Number.isFinite(eventPerf)) console.log("[live sample] pointerdown_to_play_call_ms", Number((callPerf - eventPerf).toFixed(3)));
-      const playMeta = Object.assign({}, meta, { callPerf });
+      const playMeta = Object.assign({}, meta, { callPerf, sample, voiceId });
       const h = (typeof window.__playPianoSample === "function") ? window.__playPianoSample(sample, playMeta) : null;
-      const liveHandle = __resolveLiveSampleHandle(h, sample, meta);
+      const liveHandle = __resolveLiveSampleHandle(h, sample, playMeta);
       if (liveHandle){
         liveHandle.__liveRoute = __liveRouteFromHandle(liveHandle, "sample");
         liveHandle.__startedAtPerf = performance.now();
@@ -2652,6 +2712,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         liveHandle.__via = meta && meta.via;
         liveHandle.__note = meta && meta.note;
         window.__heldSamples.set(sample, liveHandle);
+        __logLiveVoice("start request", liveHandle, { phase:"handle-ready" });
         __logLiveStartRoute(liveHandle.__liveRoute, { via: liveHandle.__via, note: liveHandle.__note, sample });
         __logLiveInputSample("start ok", { sample, via: liveHandle.__via, note: liveHandle.__note, handleType: liveHandle.type || typeof liveHandle });
       }else{
@@ -2668,6 +2729,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       __logLiveStopRoute("missing-handle", { sample, via: meta && meta.via, note: meta && meta.note });
       return;
     }
+    const stopSeq = __nextLiveStopSeq();
+    h.__stopSeq = stopSeq;
     const startedAt = Number(h.__startedAtPerf || 0);
     const elapsed = startedAt ? (performance.now() - startedAt) : null;
     const minMs = Math.max(0, meta && meta.immediate ? 0 : ((h.type === "html") ? __MIN_INPUT_SAMPLE_HTML_MS__ : __MIN_INPUT_SAMPLE_MS__));
@@ -2683,19 +2746,24 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       sample,
       via: (meta && meta.via) || h.__via,
       note: h.__note,
+      voiceId: h.__voiceId || null,
+      stopSeq,
       fn: "__stopPianoSampleHandle",
       elapsedMs: elapsed == null ? null : Math.round(elapsed),
       waitMs: Math.round(waitMs)
     });
+    __logLiveVoice("held sample delete", h, { action:"heldSamples.delete", stopSeq, sample });
     try{ window.__heldSamples.delete(sample); }catch(_){}
     const runner = () => {
       __logLiveInputSample("stop exec", {
         sample,
         via: (meta && meta.via) || h.__via,
         note: h.__note,
+        voiceId: h.__voiceId || null,
+        stopSeq,
         handleType: h.type || typeof h
       });
-      __stopPianoSampleHandle(h, fadeMs);
+      __stopPianoSampleHandle(h, fadeMs, { caller:"__stopHeldSample", stopSeq, sample, note:h.__note, via:(meta && meta.via) || h.__via });
       if ((h.type === "buffer" || h.type === "webaudio") && h.__note){
         __killLiveNoteVoices(h.__note, fadeMs, stopRoute);
       }
@@ -2707,22 +2775,26 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   function __startHeldLiveNote(note, meta){
     if (!note) return;
     const holdKey = `${(meta && meta.via) || "live"}:${note}`;
+    const voiceId = (meta && meta.voiceId) || __nextLiveVoiceId();
+    const playMeta = Object.assign({}, meta, { note, voiceId });
     if (window.__heldSamples.has(holdKey)){
       __stopHeldSample(holdKey, __LIVE_INPUT_WEB_AUDIO_RELEASE_MS__, { via:(meta && meta.via) || "live", note, immediate:true });
     }
     let h = null;
     try{
       if (soundMode === "gmpiano"){
-        h = playGmPiano(note, octave, 420, 0.95, Object.assign({}, meta, { sourceType:"live", holdToStop:true }));
+        __logLiveInputSample("start request", { note, via: meta && meta.via, voiceId, route:"gmpiano / webaudio", fn:"playGmPiano" });
+        h = playGmPiano(note, octave, 420, 0.95, Object.assign({}, playMeta, { sourceType:"live", holdToStop:true }));
       }else if (soundMode === "synth"){
         const m = midiFromNote(note, octave);
-        h = synthPiano(freqFromMidi(m), 420, 0.95, Object.assign({}, meta, { sourceType:"live", holdToStop:true, note }));
+        __logLiveInputSample("start request", { note, via: meta && meta.via, voiceId, route:"synth / webaudio", fn:"synthPiano" });
+        h = synthPiano(freqFromMidi(m), 420, 0.95, Object.assign({}, playMeta, { sourceType:"live", holdToStop:true, note }));
       }else if (soundMode === "beep"){
         const m = midiFromNote(note, octave);
-        beep(freqFromMidi(m), 0.12, 0.05, Object.assign({}, meta, { sourceType:"live" }));
+        beep(freqFromMidi(m), 0.12, 0.05, Object.assign({}, playMeta, { sourceType:"live" }));
         return holdKey;
       }else{
-        try{ playNoteOut(note, 180, Object.assign({}, meta, { sourceType:"live" })); }catch(_){}
+        try{ playNoteOut(note, 180, Object.assign({}, playMeta, { sourceType:"live" })); }catch(_){}
         return holdKey;
       }
     }catch(_){}
@@ -2732,11 +2804,22 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       : "playNoteOut";
     __logLiveStartRoute(route, { via: meta && meta.via, note, soundMode });
     if (!h) return holdKey;
+    __ensureLiveVoiceMeta(h, Object.assign({}, playMeta, { note, voiceId }));
     h.__liveRoute = route;
     h.__startedAtPerf = performance.now();
     h.__via = meta && meta.via;
     h.__note = note;
+    (h.sources || []).forEach(src => {
+      if (!src || src.__liveVoiceOnEndedWrapped) return;
+      src.__liveVoiceOnEndedWrapped = true;
+      const prev = src.onended;
+      src.onended = (ev) => {
+        __logLiveVoice("source.onended", h, { sourceType: src && src.constructor && src.constructor.name || typeof src });
+        if (typeof prev === "function") return prev.call(src, ev);
+      };
+    });
     window.__heldSamples.set(holdKey, h);
+    __logLiveVoice("start request", h, { phase:"live-note-handle-ready", soundMode });
     return holdKey;
   }
 
@@ -4386,6 +4469,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const voice = { src, gain: g, startedAt: startAt, note };
       voice.type = "buffer";
       voice.__liveRoute = "sample / webaudio";
+      __ensureLiveVoiceMeta(voice, Object.assign({}, meta, { note, sample: note }));
       window.__activeNoteVoices = window.__activeNoteVoices || new Map();
       const arr = window.__activeNoteVoices.get(note) || [];
       arr.push(voice);
@@ -4394,12 +4478,17 @@ window.addEventListener("DOMContentLoaded", ()=>{
       // cleanup on end
       src.onended = ()=> {
         try{
+          __logLiveVoice("source.onended", voice, { sourceType: src && src.constructor && src.constructor.name || typeof src });
           if (voice.__liveKilled) return;
           const a = window.__activeNoteVoices && window.__activeNoteVoices.get(note);
           if (!a) return;
           const i = a.indexOf(voice);
           if (i >= 0) a.splice(i, 1);
-          if (!a.length) window.__activeNoteVoices.delete(note);
+          __logLiveVoice("note voices delete / cleanup", voice, { action:"array-splice", note, index:i });
+          if (!a.length){
+            __logLiveVoice("note voices delete / cleanup", voice, { action:"map-delete-onended", note });
+            window.__activeNoteVoices.delete(note);
+          }
         }catch(_){}
       };
 
