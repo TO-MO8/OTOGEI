@@ -2541,12 +2541,15 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         if (ctx && handle.gain){
           const t = ctx.currentTime;
           const dur = Math.max(0.003, (fadeMs==null?__LIVE_INPUT_WEB_AUDIO_RELEASE_MS__:fadeMs)/1000);
-          handle.gain.gain.cancelScheduledValues(t);
-          const cur = Math.max(0.0001, handle.gain.gain.value || 0.0001);
-          handle.gain.gain.setValueAtTime(cur, t);
-          handle.gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+          const stopAt = t + dur + 0.03;
+          const gainParam = handle.gain.gain;
+          if (typeof gainParam.cancelAndHoldAtTime === "function") gainParam.cancelAndHoldAtTime(t);
+          else gainParam.cancelScheduledValues(t);
+          const cur = Math.max(0.0001, gainParam.value || 0.0001);
+          gainParam.setValueAtTime(cur, t);
+          gainParam.linearRampToValueAtTime(0.0001, t + dur);
           (handle.sources || []).forEach(src => {
-            try{ src.stop(t + dur + 0.002); }catch(_){}
+            try{ src.stop(stopAt); }catch(_){}
           });
         }else{
           (handle.sources || []).forEach(src => {
@@ -2564,12 +2567,14 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
           const t = ctx.currentTime;
           const isLiveRelease = handle.__via === "pointer" || handle.__via === "keyboard" || handle.__via === "live";
           const dur = Math.max(isLiveRelease ? 0.006 : 0.005, (fadeMs==null?(isLiveRelease ? __LIVE_INPUT_RELEASE_MS__ : 5):fadeMs)/1000);
-          const stopTail = isLiveRelease ? 0.003 : 0.01;
-          handle.gain.gain.cancelScheduledValues(t);
-          const cur = Math.max(0.0001, handle.gain.gain.value || 0.0001);
-          handle.gain.gain.setValueAtTime(cur, t);
-          handle.gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-          handle.src.stop(t + dur + stopTail);
+          const stopAt = t + dur + (isLiveRelease ? 0.03 : 0.02);
+          const gainParam = handle.gain.gain;
+          if (typeof gainParam.cancelAndHoldAtTime === "function") gainParam.cancelAndHoldAtTime(t);
+          else gainParam.cancelScheduledValues(t);
+          const cur = Math.max(0.0001, gainParam.value || 0.0001);
+          gainParam.setValueAtTime(cur, t);
+          gainParam.linearRampToValueAtTime(0.0001, t + dur);
+          handle.src.stop(stopAt);
         }else if (handle.src){
           try{ handle.src.stop(); }catch(_){}
         }
