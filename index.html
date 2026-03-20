@@ -522,12 +522,25 @@ window.__showLiveSampleExceptionBadge = window.__showLiveSampleExceptionBadge ||
     }, 4000);
   }catch(_e){}
 };
+window.__isLiveInputSampleMeta = window.__isLiveInputSampleMeta || function(meta){
+  const via = meta && meta.via;
+  const sourceType = meta && meta.sourceType;
+  return sourceType === "live" || via === "pointer" || via === "keyboard" || via === "live";
+};
+function __safeIsLiveInputSampleMeta(meta){
+  try{
+    if (typeof window.__isLiveInputSampleMeta === "function") return !!window.__isLiveInputSampleMeta(meta);
+  }catch(_e){}
+  const via = meta && meta.via;
+  const sourceType = meta && meta.sourceType;
+  return sourceType === "live" || via === "pointer" || via === "keyboard" || via === "live";
+}
 window.__logPlayPianoSampleEntry = window.__logPlayPianoSampleEntry || function(tag, note, meta){
   try{
     console.log(`[live sample] ${tag} note: ${window.__toOneLineLogString(note)}`);
     console.log(`[live sample] ${tag} via: ${window.__toOneLineLogString(meta && meta.via)}`);
     console.log(`[live sample] ${tag} sourceType: ${window.__toOneLineLogString(meta && meta.sourceType)}`);
-    console.log(`[live sample] ${tag} isLiveInput: ${window.__toOneLineLogString(__isLiveInputSampleMeta(meta))}`);
+    console.log(`[live sample] ${tag} isLiveInput: ${window.__toOneLineLogString(__safeIsLiveInputSampleMeta(meta))}`);
     console.log(`[live sample] ${tag} callPerf: ${window.__toOneLineLogString(meta && meta.callPerf)}`);
   }catch(_e){}
 };
@@ -2690,11 +2703,9 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     return direct;
   }
 
-  function __isLiveInputSampleMeta(meta){
-    const via = meta && meta.via;
-    const sourceType = meta && meta.sourceType;
-    return sourceType === "live" || via === "pointer" || via === "keyboard" || via === "live";
-  }
+  const __isLiveInputSampleMeta = function(meta){
+    return __safeIsLiveInputSampleMeta(meta);
+  };
 
   function __logLiveStartRoute(route, detail){
     try{ console.log(`[live start route: ${route}]`, detail || {}); }catch(_){}
@@ -2890,12 +2901,12 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       }, playMeta);
       window.__pendingHeldSamples.set(sample, pendingHandle);
       const playFnType = typeof window.__playPianoSample;
-      __logLiveInputSample("before __playPianoSample", `typeof=${window.__toOneLineLogString(playFnType)} sample=${window.__toOneLineLogString(sample)} note=${window.__toOneLineLogString(playMeta.note)} liveInput=${window.__toOneLineLogString(__isLiveInputSampleMeta(playMeta))}`);
+      __logLiveInputSample("before __playPianoSample", `typeof=${window.__toOneLineLogString(playFnType)} sample=${window.__toOneLineLogString(sample)} note=${window.__toOneLineLogString(playMeta.note)} liveInput=${window.__toOneLineLogString(__safeIsLiveInputSampleMeta(playMeta))}`);
       try{
         console.log(`[live sample] before __playPianoSample typeof: ${window.__toOneLineLogString(playFnType)}`);
         console.log(`[live sample] before __playPianoSample sample: ${window.__toOneLineLogString(sample)}`);
         console.log(`[live sample] before __playPianoSample note: ${window.__toOneLineLogString(playMeta.note)}`);
-        console.log(`[live sample] before __playPianoSample liveInput: ${window.__toOneLineLogString(__isLiveInputSampleMeta(playMeta))}`);
+        console.log(`[live sample] before __playPianoSample liveInput: ${window.__toOneLineLogString(__safeIsLiveInputSampleMeta(playMeta))}`);
       }catch(_){ }
       if (playFnType !== "function"){
         __logLiveInputSample("start early return (__playPianoSample unavailable)", {
@@ -4834,7 +4845,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
   // Override: play via AudioBuffer if ready, otherwise fallback to HTMLAudio pool
   window.__playPianoSample = function(note, meta){
     try{ window.__logPlayPianoSampleEntry("__playPianoSample enter", note, meta); }catch(_){ }
-    const isLiveInput = __isLiveInputSampleMeta(meta);
+    const isLiveInput = __safeIsLiveInputSampleMeta(meta);
     // If buffer ready, this is the fastest path
     const h = __playBufferNow(note, meta);
     if (h){
