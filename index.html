@@ -479,7 +479,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-008"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-009"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2592,9 +2592,11 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     else if (octave === 5) gain = 0.78;
 
     if (octave === 3 && pitch === "Fs") return 0.72;
-    if (octave === 4 && ["E","F","Fs","G","Gs","A","As","B"].includes(pitch)) return 0.67;
+    if (octave === 4 && pitch === "C") return 0.70;
+    if (octave === 4 && ["Cs","D","Ds"].includes(pitch)) return 0.67;
+    if (octave === 4 && ["E","F","Fs","G","Gs","A","As","B"].includes(pitch)) return 0.64;
     if (octave === 5 && pitch === "C") return 0.78;
-    if (octave === 5 && ["D","Ds","E","F","Fs","G","Gs","A","As","B"].includes(pitch)) return 0.74;
+    if (octave === 5 && ["D","Ds","E","F","Fs","G","Gs","A","As","B"].includes(pitch)) return 0.70;
     return gain;
   }
   window.__getLiveInputSampleGainMultiplier = __getLiveInputSampleGainMultiplier;
