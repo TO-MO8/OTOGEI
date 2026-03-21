@@ -241,7 +241,8 @@ button, select, input[type="file"]{
     .liveSampleDebugMeter .row:last-child{margin-bottom:0;}
     .liveSampleDebugMeter .label{min-width:0; font-size:10px; color:var(--muted); font-weight:900;}
     .liveSampleDebugMeter .value{font-weight:950; word-break:break-word;}
-    .liveSampleDebugMeter .clipWarn{color:var(--warn);}
+    .liveSampleDebugMeter .clipWarn{color:#cfe0ff;}
+    .liveSampleDebugMeter .clipWarn.isWarn{color:var(--warn);}
     .liveSampleDebugMeter .clipWarn.isClip{color:var(--bad);}
     .liveSampleDebugMeter .history{display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;}
     .liveSampleDebugMeter .historyChip{
@@ -250,6 +251,7 @@ button, select, input[type="file"]{
       border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06);
       font-size:10px; font-weight:900;
     }
+    .liveSampleDebugMeter .historyChip.isWarn{border-color:rgba(255,193,107,.42); color:#ffe4b3; background:rgba(255,193,107,.10);}
     .liveSampleDebugMeter .historyChip.isClip{border-color:rgba(255,107,107,.45); color:#ffd0d0; background:rgba(255,107,107,.12);}
     @media (max-width:860px){
       .liveSampleDebugMeter{top:92px; right:8px; left:8px; max-width:none; min-width:0; font-size:10px; padding:8px 10px;}
@@ -264,6 +266,8 @@ button, select, input[type="file"]{
     <div class="title">live input sample debug</div>
     <div class="row"><div class="label">note</div><div class="value" id="liveSampleDebugNote">-</div></div>
     <div class="row"><div class="label">route</div><div class="value" id="liveSampleDebugRoute">-</div></div>
+    <div class="row"><div class="label">source pk</div><div class="value" id="liveSampleDebugSourcePeak">-</div></div>
+    <div class="row"><div class="label">gain</div><div class="value" id="liveSampleDebugGain">-</div></div>
     <div class="row"><div class="label">peak</div><div class="value" id="liveSampleDebugPeak">-</div></div>
     <div class="row"><div class="label">clip</div><div class="value clipWarn" id="liveSampleDebugClip">OK</div></div>
     <div class="history" id="liveSampleDebugHistory"></div>
@@ -516,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-012"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-013"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -524,7 +528,19 @@ window.__liveSampleDebugHistory = window.__liveSampleDebugHistory || [];
 window.__liveSampleDebugPeakCache = window.__liveSampleDebugPeakCache || new Map();
 window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__ = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__))
   ? Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__)
-  : 0.98;
+  : 0.96;
+window.__LIVE_INPUT_DEBUG_WARN_THRESHOLD__ = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_WARN_THRESHOLD__))
+  ? Number(window.__LIVE_INPUT_DEBUG_WARN_THRESHOLD__)
+  : 0.90;
+window.__getLiveInputDebugSeverity = window.__getLiveInputDebugSeverity || function(value){
+  const peak = Number(value);
+  if (!Number.isFinite(peak)) return "ok";
+  const clipThreshold = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__)) ? Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__) : 0.96;
+  const warnThreshold = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_WARN_THRESHOLD__)) ? Number(window.__LIVE_INPUT_DEBUG_WARN_THRESHOLD__) : 0.90;
+  if (peak >= clipThreshold) return "clip";
+  if (peak >= Math.min(warnThreshold, clipThreshold)) return "warn";
+  return "ok";
+};
 window.__applyBuildVersionBadge = function(){
   try{
     const currentBuildId = String(window.__APP_BUILD_ID__ || __APP_BUILD_ID__ || "");
@@ -628,33 +644,58 @@ window.__updateLiveInputDebugMeter = window.__updateLiveInputDebugMeter || funct
     const note = String(data.note || "-");
     const route = String(data.route || "-");
     const peakValue = Number(data.peak);
-    const threshold = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__)) ? Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__) : 0.98;
-    const isClip = !!data.isClip || (Number.isFinite(peakValue) && peakValue >= threshold);
+    const sourcePeakValue = Number(data.sourcePeak);
+    const gainValue = Number(data.gainMultiplier);
+    const clipThreshold = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__)) ? Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__) : 0.96;
+    const warnThreshold = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_WARN_THRESHOLD__)) ? Number(window.__LIVE_INPUT_DEBUG_WARN_THRESHOLD__) : 0.90;
+    const severity = String(data.severity || window.__getLiveInputDebugSeverity(peakValue) || "ok");
+    const isWarn = severity === "warn";
+    const isClip = severity === "clip" || !!data.isClip;
+    const sourcePeakText = Number.isFinite(sourcePeakValue) ? sourcePeakValue.toFixed(3) : "-";
+    const gainText = Number.isFinite(gainValue) ? gainValue.toFixed(3) : "-";
     const peakText = Number.isFinite(peakValue) ? peakValue.toFixed(3) : "-";
     const noteEl = document.getElementById("liveSampleDebugNote");
     const routeEl = document.getElementById("liveSampleDebugRoute");
+    const sourcePeakEl = document.getElementById("liveSampleDebugSourcePeak");
+    const gainEl = document.getElementById("liveSampleDebugGain");
     const peakEl = document.getElementById("liveSampleDebugPeak");
     const clipEl = document.getElementById("liveSampleDebugClip");
     if (noteEl) noteEl.textContent = note;
     if (routeEl) routeEl.textContent = route;
+    if (sourcePeakEl) sourcePeakEl.textContent = sourcePeakText;
+    if (gainEl) gainEl.textContent = gainText;
     if (peakEl) peakEl.textContent = peakText;
     if (clipEl){
-      clipEl.textContent = isClip ? `CLIP (${threshold.toFixed(2)}+)` : "OK";
+      clipEl.textContent = isClip
+        ? `CLIP (${clipThreshold.toFixed(2)}+)`
+        : (isWarn ? `WARN (${warnThreshold.toFixed(2)}+)` : "OK");
+      clipEl.classList.toggle("isWarn", isWarn);
       clipEl.classList.toggle("isClip", isClip);
     }
     const historyEl = document.getElementById("liveSampleDebugHistory");
     if (!historyEl) return;
-    const entry = { note, route, peak: Number.isFinite(peakValue) ? peakValue : null, isClip };
+    const entry = {
+      note,
+      route,
+      sourcePeak: Number.isFinite(sourcePeakValue) ? sourcePeakValue : null,
+      peak: Number.isFinite(peakValue) ? peakValue : null,
+      gain: Number.isFinite(gainValue) ? gainValue : null,
+      severity,
+      isWarn,
+      isClip
+    };
     const history = Array.isArray(window.__liveSampleDebugHistory) ? window.__liveSampleDebugHistory : [];
     history.unshift(entry);
     window.__liveSampleDebugHistory = history.slice(0, 8);
     historyEl.innerHTML = "";
     window.__liveSampleDebugHistory.forEach(item => {
       const chip = document.createElement("span");
-      chip.className = `historyChip${item.isClip ? " isClip" : ""}`;
+      chip.className = `historyChip${item.isClip ? " isClip" : (item.isWarn ? " isWarn" : "")}`;
       const peakPart = Number.isFinite(item.peak) ? item.peak.toFixed(3) : "-";
-      chip.textContent = `${item.note} ${peakPart}`;
-      chip.title = `${item.note} / ${item.route} / ${peakPart}${item.isClip ? " / CLIP" : ""}`;
+      const gainPart = Number.isFinite(item.gain) ? item.gain.toFixed(3) : "-";
+      const statePart = item.isClip ? "CLIP" : (item.isWarn ? "WARN" : "OK");
+      chip.textContent = `${item.note} p${peakPart} g${gainPart} ${statePart}`;
+      chip.title = `${item.note} / ${item.route} / src ${Number.isFinite(item.sourcePeak) ? item.sourcePeak.toFixed(3) : "-"} / post ${peakPart} / gain ${gainPart} / ${statePart}`;
       historyEl.appendChild(chip);
     });
   }catch(_e){}
@@ -665,17 +706,20 @@ window.__captureLiveInputDebugMeter = window.__captureLiveInputDebugMeter || fun
     const info = extra || {};
     const gainMultiplier = Number(info.gainMultiplier);
     const rawPeak = window.__getLiveInputSamplePeakValue(note);
-    let peak = Number.isFinite(rawPeak) ? rawPeak : null;
+    const sourcePeak = Number.isFinite(rawPeak) ? rawPeak : null;
+    let peak = Number.isFinite(sourcePeak) ? sourcePeak : null;
     if (Number.isFinite(peak) && Number.isFinite(gainMultiplier)) peak *= gainMultiplier;
-    else if (Number.isFinite(gainMultiplier)) peak = gainMultiplier;
     if (Number.isFinite(peak)) peak = Math.max(0, Math.min(peak, 1.999));
     const route = String(info.route || (info.handle && info.handle.__liveRoute) || "sample / unknown");
-    const threshold = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__)) ? Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__) : 0.98;
+    const severity = window.__getLiveInputDebugSeverity(peak);
     const payload = {
       note: note || (meta && meta.note) || "-",
       route,
+      sourcePeak,
+      gainMultiplier: Number.isFinite(gainMultiplier) ? gainMultiplier : null,
       peak,
-      isClip: Number.isFinite(peak) && peak >= threshold
+      severity,
+      isClip: severity === "clip"
     };
     window.__updateLiveInputDebugMeter(payload);
     try{ console.log("[live sample debug]", payload); }catch(_e){}
