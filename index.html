@@ -226,11 +226,48 @@ button, select, input[type="file"]{
     @media (max-width:860px){
       .liveSampleExceptionBadge{top:46px; right:8px; max-width:calc(100vw - 16px); font-size:10px; padding:7px 9px;}
     }
+    .liveSampleDebugMeter{
+      position:fixed; top:102px; right:10px; z-index:9996;
+      min-width:220px; max-width:min(56vw, 360px);
+      padding:10px 12px; border-radius:12px;
+      border:1px solid rgba(116,179,255,.28);
+      background:rgba(6,10,24,.90); color:rgba(255,255,255,.92);
+      box-shadow:0 10px 28px rgba(0,0,0,.28);
+      font-size:11px; line-height:1.45; letter-spacing:.02em;
+      backdrop-filter: blur(8px);
+    }
+    .liveSampleDebugMeter .title{font-size:10px; font-weight:950; color:var(--muted); margin-bottom:6px;}
+    .liveSampleDebugMeter .row{display:grid; grid-template-columns:58px 1fr; gap:6px; align-items:start; margin-bottom:3px;}
+    .liveSampleDebugMeter .row:last-child{margin-bottom:0;}
+    .liveSampleDebugMeter .label{min-width:0; font-size:10px; color:var(--muted); font-weight:900;}
+    .liveSampleDebugMeter .value{font-weight:950; word-break:break-word;}
+    .liveSampleDebugMeter .clipWarn{color:var(--warn);}
+    .liveSampleDebugMeter .clipWarn.isClip{color:var(--bad);}
+    .liveSampleDebugMeter .history{display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;}
+    .liveSampleDebugMeter .historyChip{
+      display:inline-flex; align-items:center; gap:4px;
+      padding:2px 6px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06);
+      font-size:10px; font-weight:900;
+    }
+    .liveSampleDebugMeter .historyChip.isClip{border-color:rgba(255,107,107,.45); color:#ffd0d0; background:rgba(255,107,107,.12);}
+    @media (max-width:860px){
+      .liveSampleDebugMeter{top:92px; right:8px; left:8px; max-width:none; min-width:0; font-size:10px; padding:8px 10px;}
+      .liveSampleDebugMeter .row{grid-template-columns:52px 1fr;}
+    }
   </style>
 </head>
 <body>
   <div id="buildBadge" class="buildBadge" aria-label="build version"></div>
   <div id="liveSampleExceptionBadge" class="liveSampleExceptionBadge" aria-live="polite"></div>
+  <div id="liveSampleDebugMeter" class="liveSampleDebugMeter" aria-live="polite">
+    <div class="title">live input sample debug</div>
+    <div class="row"><div class="label">note</div><div class="value" id="liveSampleDebugNote">-</div></div>
+    <div class="row"><div class="label">route</div><div class="value" id="liveSampleDebugRoute">-</div></div>
+    <div class="row"><div class="label">peak</div><div class="value" id="liveSampleDebugPeak">-</div></div>
+    <div class="row"><div class="label">clip</div><div class="value clipWarn" id="liveSampleDebugClip">OK</div></div>
+    <div class="history" id="liveSampleDebugHistory"></div>
+  </div>
   <div class="app">
     <div class="card">
       <div class="header">
@@ -479,10 +516,15 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-011"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-012"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
+window.__liveSampleDebugHistory = window.__liveSampleDebugHistory || [];
+window.__liveSampleDebugPeakCache = window.__liveSampleDebugPeakCache || new Map();
+window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__ = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__))
+  ? Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__)
+  : 0.98;
 window.__applyBuildVersionBadge = function(){
   try{
     const currentBuildId = String(window.__APP_BUILD_ID__ || __APP_BUILD_ID__ || "");
@@ -544,6 +586,102 @@ window.__logPlayPianoSampleEntry = window.__logPlayPianoSampleEntry || function(
     console.log(`[live sample] ${tag} isLiveInput: ${window.__toOneLineLogString(__safeIsLiveInputSampleMeta(meta))}`);
     console.log(`[live sample] ${tag} callPerf: ${window.__toOneLineLogString(meta && meta.callPerf)}`);
   }catch(_e){}
+};
+window.__measureBufferPeak = window.__measureBufferPeak || function(buf){
+  try{
+    if (!buf || typeof buf.length !== "number" || !buf.numberOfChannels) return null;
+    let peak = 0;
+    for (let ch = 0; ch < buf.numberOfChannels; ch++){
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < data.length; i++){
+        const v = Math.abs(data[i]);
+        if (v > peak) peak = v;
+      }
+    }
+    return peak;
+  }catch(_e){}
+  return null;
+};
+window.__getLiveInputSamplePeakValue = window.__getLiveInputSamplePeakValue || function(note){
+  const key = String(note || "").trim();
+  if (!key) return null;
+  try{
+    if (window.__liveSampleDebugPeakCache && window.__liveSampleDebugPeakCache.has(key)) return window.__liveSampleDebugPeakCache.get(key);
+  }catch(_e){}
+  let buf = null;
+  try{ buf = window.__pianoBufCache && window.__pianoBufCache.get(key); }catch(_e){}
+  if (!buf){
+    try{
+      const shared = window.sampleBufCache && window.sampleBufCache.get(key);
+      buf = shared && shared.ok && shared.buf ? shared.buf : null;
+    }catch(_e){}
+  }
+  if (!buf) return null;
+  const peak = window.__measureBufferPeak(buf);
+  if (!Number.isFinite(peak)) return null;
+  try{ window.__liveSampleDebugPeakCache.set(key, peak); }catch(_e){}
+  return peak;
+};
+window.__updateLiveInputDebugMeter = window.__updateLiveInputDebugMeter || function(info){
+  try{
+    const data = info || {};
+    const note = String(data.note || "-");
+    const route = String(data.route || "-");
+    const peakValue = Number(data.peak);
+    const threshold = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__)) ? Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__) : 0.98;
+    const isClip = !!data.isClip || (Number.isFinite(peakValue) && peakValue >= threshold);
+    const peakText = Number.isFinite(peakValue) ? peakValue.toFixed(3) : "-";
+    const noteEl = document.getElementById("liveSampleDebugNote");
+    const routeEl = document.getElementById("liveSampleDebugRoute");
+    const peakEl = document.getElementById("liveSampleDebugPeak");
+    const clipEl = document.getElementById("liveSampleDebugClip");
+    if (noteEl) noteEl.textContent = note;
+    if (routeEl) routeEl.textContent = route;
+    if (peakEl) peakEl.textContent = peakText;
+    if (clipEl){
+      clipEl.textContent = isClip ? `CLIP (${threshold.toFixed(2)}+)` : "OK";
+      clipEl.classList.toggle("isClip", isClip);
+    }
+    const historyEl = document.getElementById("liveSampleDebugHistory");
+    if (!historyEl) return;
+    const entry = { note, route, peak: Number.isFinite(peakValue) ? peakValue : null, isClip };
+    const history = Array.isArray(window.__liveSampleDebugHistory) ? window.__liveSampleDebugHistory : [];
+    history.unshift(entry);
+    window.__liveSampleDebugHistory = history.slice(0, 8);
+    historyEl.innerHTML = "";
+    window.__liveSampleDebugHistory.forEach(item => {
+      const chip = document.createElement("span");
+      chip.className = `historyChip${item.isClip ? " isClip" : ""}`;
+      const peakPart = Number.isFinite(item.peak) ? item.peak.toFixed(3) : "-";
+      chip.textContent = `${item.note} ${peakPart}`;
+      chip.title = `${item.note} / ${item.route} / ${peakPart}${item.isClip ? " / CLIP" : ""}`;
+      historyEl.appendChild(chip);
+    });
+  }catch(_e){}
+};
+window.__captureLiveInputDebugMeter = window.__captureLiveInputDebugMeter || function(note, meta, extra){
+  try{
+    if (!__safeIsLiveInputSampleMeta(meta)) return null;
+    const info = extra || {};
+    const gainMultiplier = Number(info.gainMultiplier);
+    const rawPeak = window.__getLiveInputSamplePeakValue(note);
+    let peak = Number.isFinite(rawPeak) ? rawPeak : null;
+    if (Number.isFinite(peak) && Number.isFinite(gainMultiplier)) peak *= gainMultiplier;
+    else if (Number.isFinite(gainMultiplier)) peak = gainMultiplier;
+    if (Number.isFinite(peak)) peak = Math.max(0, Math.min(peak, 1.999));
+    const route = String(info.route || (info.handle && info.handle.__liveRoute) || "sample / unknown");
+    const threshold = Number.isFinite(Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__)) ? Number(window.__LIVE_INPUT_DEBUG_CLIP_THRESHOLD__) : 0.98;
+    const payload = {
+      note: note || (meta && meta.note) || "-",
+      route,
+      peak,
+      isClip: Number.isFinite(peak) && peak >= threshold
+    };
+    window.__updateLiveInputDebugMeter(payload);
+    try{ console.log("[live sample debug]", payload); }catch(_e){}
+    return payload;
+  }catch(_e){}
+  return null;
 };
 try{ window.__applyBuildVersionBadge(); }catch(_e){}
 document.addEventListener("DOMContentLoaded", () => {
@@ -4708,6 +4846,7 @@ useBtn.addEventListener("click", () => {
       a.volume = liveGain;
       if (handle && handle.audio) handle.audio.volume = liveGain;
       if (handle && typeof handle === "object") handle.__gainMultiplier = liveGain;
+      try{ window.__captureLiveInputDebugMeter && window.__captureLiveInputDebugMeter(note, meta, { route:"sample / html audio", gainMultiplier: liveGain, handle }); }catch(_){ }
       try{
         const p = a.play();
         if (p && typeof p.catch === "function") p.catch(err => console.warn("[sample play blocked]", err));
@@ -4925,6 +5064,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const voice = { src, gain: g, startedAt: startAt, note };
       voice.type = "buffer";
       voice.__liveRoute = "sample / webaudio";
+      try{ window.__captureLiveInputDebugMeter && window.__captureLiveInputDebugMeter(note, meta, { route:"sample / webaudio", gainMultiplier: liveGain, handle: voice }); }catch(_){ }
       __ensureLiveVoiceMeta(voice, Object.assign({}, meta, { note, sample: note }));
       window.__activeNoteVoices = window.__activeNoteVoices || new Map();
       const arr = window.__activeNoteVoices.get(note) || [];
