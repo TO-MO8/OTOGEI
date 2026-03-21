@@ -479,7 +479,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-001"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-002"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2589,6 +2589,22 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (octave === 5) return 0.88;
     return 1.0;
   }
+  window.__getLiveInputSampleGainMultiplier = __getLiveInputSampleGainMultiplier;
+
+  function __resolveLiveInputSampleGainMultiplier(note, meta){
+    const gainFn = (typeof __getLiveInputSampleGainMultiplier === "function")
+      ? __getLiveInputSampleGainMultiplier
+      : ((window && typeof window.__getLiveInputSampleGainMultiplier === "function")
+        ? window.__getLiveInputSampleGainMultiplier
+        : null);
+    if (typeof gainFn !== "function") return 1.0;
+    try{
+      const gain = Number(gainFn(note, meta));
+      return Number.isFinite(gain) ? gain : 1.0;
+    }catch(_){ }
+    return 1.0;
+  }
+  window.__resolveLiveInputSampleGainMultiplier = __resolveLiveInputSampleGainMultiplier;
 
   function __logLiveInputSample(tag, detail){
     if (!__LIVE_INPUT_SAMPLE_LOG__ || soundMode !== "sample") return;
@@ -4596,7 +4612,7 @@ useBtn.addEventListener("click", () => {
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)) return null;
       try{ a.pause(); }catch(_){ }
       try{ a.currentTime = 0; }catch(_){ }
-      a.volume = __getLiveInputSampleGainMultiplier(note, meta);
+      a.volume = __resolveLiveInputSampleGainMultiplier(note, meta);
       try{
         const p = a.play();
         if (p && typeof p.catch === "function") p.catch(err => console.warn("[sample play blocked]", err));
@@ -4788,7 +4804,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const callPerfNow = Number.isFinite(callPerf) ? callPerf : performance.now();
       const startLeadMs = (startAt - nowCtx) * 1000;
       const audibleMs = (Number.isFinite(eventPerf) ? (callPerfNow - eventPerf) : 0) + Math.max(0, startLeadMs) + attackMs;
-      const liveGain = __getLiveInputSampleGainMultiplier(note, meta);
+      const liveGain = __resolveLiveInputSampleGainMultiplier(note, meta);
       if (attackMs <= 0){
         g.gain.setValueAtTime(liveGain, startAt);
       }else{
