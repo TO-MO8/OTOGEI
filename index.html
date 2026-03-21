@@ -479,20 +479,21 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260320-004"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260320-005"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
 window.__applyBuildVersionBadge = function(){
   try{
+    const currentBuildId = String(window.__APP_BUILD_ID__ || __APP_BUILD_ID__ || "");
     const badge = document.getElementById("buildBadge");
     if (badge){
-      badge.textContent = __APP_BUILD_ID__;
-      badge.dataset.buildId = __APP_BUILD_ID__;
-      badge.title = __APP_BUILD_ID__;
+      badge.textContent = currentBuildId;
+      badge.dataset.buildId = currentBuildId;
+      badge.title = currentBuildId;
     }
     if (!window.__buildVersionLogged){
-      console.log("[build/version]", __APP_BUILD_ID__);
+      console.log("[build/version]", currentBuildId);
       window.__buildVersionLogged = true;
     }
   }catch(_e){}
@@ -2659,6 +2660,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     __ensureLiveVoiceMeta(h, meta);
     return h;
   }
+  window.__normalizeLiveSampleHandle = __normalizeLiveSampleHandle;
 
   function __adoptLiveSampleHandle(target, source, meta){
     const t = (target && typeof target === "object") ? target : null;
@@ -4546,7 +4548,7 @@ useBtn.addEventListener("click", () => {
     }
     entry.idx = (entry.idx + 1) % Math.max(1, entry.list.length);
 
-    const handle = __normalizeLiveSampleHandle({ type:"html", audio:a, note, __liveRoute:"sample / html audio" }, meta);
+    const handle = window.__normalizeLiveSampleHandle({ type:"html", audio:a, note, __liveRoute:"sample / html audio" }, meta);
     try{
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)) return null;
       try{ a.pause(); }catch(_){ }
@@ -4850,11 +4852,11 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const h = __playBufferNow(note, meta);
     if (h){
       try{ console.log("[live sample] __playPianoSample buffer", { note }); }catch(e){}
-      return __normalizeLiveSampleHandle(h, meta);
+      return window.__normalizeLiveSampleHandle(h, meta);
     }
     // Live input keeps a stop-capable handle and waits for the stop-safe path first.
     if (isLiveInput){
-      const pending = __normalizeLiveSampleHandle({
+      const pending = window.__normalizeLiveSampleHandle({
         type: "pending",
         note,
         __note: (meta && meta.note) || note,
@@ -4875,7 +4877,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
         })
         .then(handle => {
           pending.__pendingStart = false;
-          const liveHandle = __normalizeLiveSampleHandle(handle, meta);
+          const liveHandle = window.__normalizeLiveSampleHandle(handle, meta);
           return (liveHandle && liveHandle.type !== "pending") ? liveHandle : null;
         })
         .catch(() => {
@@ -4886,7 +4888,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     }
     // If not ready yet, kick decode and fallback immediately
     try{ window.__preloadPianoBuffer(note); }catch(e){}
-    try{ return __normalizeLiveSampleHandle(window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta), meta); }catch(e){}
+    try{ return window.__normalizeLiveSampleHandle(window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta), meta); }catch(e){}
   };
 
   // One-time audio unlock on first gesture anywhere (resume + silent tick)
@@ -5018,7 +5020,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
 })();
 </script>
 
-<!-- ===== Auto reload timestamp (debug) ===== -->
+<!-- ===== Auto reload timestamp (debug only, not build version) ===== -->
 <div id="__stamp"
      style="position:fixed;left:10px;bottom:10px;z-index:999999;
             background:#000;color:#0f0;padding:4px 6px;border-radius:6px;
@@ -5033,7 +5035,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
   const s =
     `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ` +
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  el.textContent = "reloaded: " + s;
+  el.textContent = "reloaded at: " + s;
 })();
 </script>
 
