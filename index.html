@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-023"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-024"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1720,6 +1720,12 @@ async function playSample(note, octave, durMs, opts={}){
       songStartAudioTime: Number.isFinite(Number(opts.songStartAudioTime)) ? Number(opts.songStartAudioTime) : null,
       scheduledAudioTime: Number.isFinite(Number(opts.scheduledAudioTime)) ? Number(opts.scheduledAudioTime) : null
     };
+    try{ if (isSongPlayback && sampleMeta.songEventId) __traceSongEventId("playSample", {
+      songEventId: sampleMeta.songEventId,
+      note: full,
+      plannedTimeSec: sampleMeta.plannedTimeSec,
+      route: "sample"
+    }); }catch(_){}
     try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("playCall", {
       note: full,
       durMs: sampleMeta.durMs,
@@ -4720,6 +4726,9 @@ return trSources[0]?.id || sources[0].id;
     fatalDroppedCount: 0,
     secondaryDroppedCount: 0,
     noteDelays: [],
+    songEventIds: Object.create(null),
+    songEventIdOrder: [],
+    traceLogCount: 0,
     routeStats: Object.create(null),
     finalized: false,
     finalizedReason: ""
@@ -4735,6 +4744,16 @@ return trSources[0]?.id || sources[0].id;
       const textSongEventId = String(songEventId).trim();
       if (textSongEventId) return textSongEventId;
     }
+    const metaSongEventId = detail && detail.meta && detail.meta.songEventId;
+    if (metaSongEventId != null){
+      const textMetaSongEventId = String(metaSongEventId).trim();
+      if (textMetaSongEventId) return textMetaSongEventId;
+    }
+    const noteStateSongEventId = detail && detail.noteState && detail.noteState.songEventId;
+    if (noteStateSongEventId != null){
+      const textNoteStateSongEventId = String(noteStateSongEventId).trim();
+      if (textNoteStateSongEventId) return textNoteStateSongEventId;
+    }
     const token = (detail && detail.token != null) ? detail.token : fallbackToken;
     const note = detail && detail.note;
     return __getSongPlaybackEmitKey(token, note);
@@ -4744,6 +4763,7 @@ return trSources[0]?.id || sources[0].id;
     if (!state.noteStates) state.noteStates = Object.create(null);
     if (!state.noteStates[eventKey]){
       state.noteStates[eventKey] = {
+        songEventId: eventKey,
         emitSummaryCounted: false,
         startedCount: 0,
         dropCount: 0,
@@ -4780,6 +4800,37 @@ return trSources[0]?.id || sources[0].id;
       state.routeStats[group] = { startedCount:0, droppedCount:0, delaySumMs:0, delayCount:0 };
     }
     return { group, stats: state.routeStats[group] };
+  }
+  function __registerSongLengthDebugEventId(state, detail){
+    if (!state) return "";
+    const eventKey = __getSongPlaybackEventKey(detail, state.token || 0);
+    if (!eventKey) return "";
+    if (!state.songEventIds) state.songEventIds = Object.create(null);
+    if (!state.songEventIdOrder) state.songEventIdOrder = [];
+    if (!state.songEventIds[eventKey]){
+      state.songEventIds[eventKey] = true;
+      state.songEventIdOrder.push(eventKey);
+    }
+    return eventKey;
+  }
+  function __traceSongEventId(where, detail){
+    try{
+      const state = window.__songLengthDebugState || null;
+      if (!state) return;
+      const eventKey = __registerSongLengthDebugEventId(state, detail);
+      if (!eventKey) return;
+      const traceLimit = 12;
+      const traceCount = Number(state.traceLogCount || 0);
+      if (traceCount >= traceLimit) return;
+      state.traceLogCount = traceCount + 1;
+      console.log("[song event id trace]", {
+        songEventId: eventKey,
+        note: String(detail && detail.note || ""),
+        plannedTimeSec: Number.isFinite(Number(detail && detail.plannedTimeSec)) ? Number(Number(detail.plannedTimeSec).toFixed(6)) : null,
+        route: detail && detail.route ? String(detail.route) : "",
+        where: String(where || "")
+      });
+    }catch(_e){}
   }
   function __getSongEmitAllowCaller(){
     try{
@@ -4917,6 +4968,9 @@ return trSources[0]?.id || sources[0].id;
       fatalDroppedCount: 0,
       secondaryDroppedCount: 0,
       noteDelays: [],
+      songEventIds: Object.create(null),
+      songEventIdOrder: [],
+      traceLogCount: 0,
       routeStats: Object.create(null),
       finalized: false,
       finalizedReason: ""
@@ -4929,11 +4983,15 @@ return trSources[0]?.id || sources[0].id;
     try{
       const state = window.__songLengthDebugState || __resetSongLengthDebug();
       const key = String(kind || "").trim();
+      const eventKey = __registerSongLengthDebugEventId(state, detail);
+      if (eventKey && detail && detail.songEventId == null) detail.songEventId = eventKey;
       if (key === "emit"){
         if (detail && detail.summaryCounted === false) return state;
+        if (eventKey) __traceSongEventId("playNoteOut", detail);
         if (Object.prototype.hasOwnProperty.call(state.counts, key)) state.counts[key] += 1;
       }else if (key === "start"){
         if (detail && detail.summaryCounted === false) return state;
+        if (eventKey) __traceSongEventId("markStart", detail);
         if (Object.prototype.hasOwnProperty.call(state.counts, key)) state.counts[key] += 1;
         const actualStartPerfNow = Number(detail && detail.actualStartPerfNow);
         const actualStartAudioTime = Number(detail && detail.actualStartAudioTime);
@@ -4964,6 +5022,7 @@ return trSources[0]?.id || sources[0].id;
         }
       }else if (key === "drop"){
         if (detail && detail.summaryCounted === false) return state;
+        if (eventKey) __traceSongEventId("markDrop", detail);
         if (Object.prototype.hasOwnProperty.call(state.counts, key)) state.counts[key] += 1;
         const routeInfo = __ensureSongRouteDebugState(state, detail && detail.route);
         routeInfo.stats.droppedCount += 1;
@@ -5048,6 +5107,7 @@ return trSources[0]?.id || sources[0].id;
       const eventKey = __getSongPlaybackEventKey(detail, token);
       const emitKey = __getSongPlaybackEmitKey(token, note);
       const noteState = __ensureSongPlaybackNoteState(state, eventKey || emitKey);
+      if (noteState && eventKey) noteState.songEventId = eventKey;
       let emitKeyCount = null;
       if (key === "emit" && emitKey){
         if (!state.emitKeyCounts) state.emitKeyCounts = Object.create(null);
@@ -5067,6 +5127,7 @@ return trSources[0]?.id || sources[0].id;
       }, detail || {});
       if (eventKey){
         payload.songEventId = eventKey;
+        payload.noteStateKey = eventKey;
         if (!state.songEventIds) state.songEventIds = Object.create(null);
         if (!state.songEventIdOrder) state.songEventIdOrder = [];
         if (!state.songEventIds[eventKey]){
@@ -5467,6 +5528,13 @@ async function __playAllFromTrack(runId, songToken){
         const noteObj = (nn && typeof nn === "object") ? nn : { n: nn, o: parseInt(octSel.value || "4", 10) };
         const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
+        const songEventId = `${runId}:${songToken}:${sourceId}:${songNoteIndex}`;
+        try{ __traceSongEventId("playAll", {
+          songEventId,
+          note: playNote,
+          plannedTimeSec,
+          route: "playAll"
+        }); }catch(_){}
         const scheduleLeadMs = 25;
         const waitMs = Math.max(0, Math.round((songStartPerfNow + (plannedTimeSec * 1000)) - performance.now() - scheduleLeadMs));
         if (waitMs > 0){
@@ -5477,7 +5545,7 @@ async function __playAllFromTrack(runId, songToken){
         await window.playNoteOut(playNote, dur, {
           sourceType:"song",
           token:songToken,
-          songEventId: `${runId}:${songToken}:${sourceId}:${songNoteIndex}`,
+          songEventId,
           songNoteIndex,
           matchLiveInputSample:true,
           plannedTimeSec,
