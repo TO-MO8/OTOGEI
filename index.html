@@ -1623,11 +1623,41 @@ async function playSample(note, octave, durMs, opts={}){
     try{ console.log("[live sample] question play", { note, octave: reqOct, full, fn: "__playPianoSample" }); }catch(e){}
     const callPerf = performance.now();
     const via = opts.sourceType === "song" ? "song" : (opts.sourceType === "live" ? "live" : "question");
+    const isSongPlayback = opts.sourceType === "song";
     const matchLiveInputSample = !!opts.matchLiveInputSample;
-    if (matchLiveInputSample){
+    if (isSongPlayback){
+      try{
+        const hadBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
+        window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
+          note: full,
+          matchLiveInputSample,
+          hadBuffer
+        });
+        if (!hadBuffer && typeof window.__preloadPianoBuffer === "function"){
+          const preloadStartedAt = performance.now();
+          const preloadPromise = window.__preloadPianoBuffer(full);
+          if (preloadPromise && typeof preloadPromise.then === "function"){
+            preloadPromise.then(buf => {
+              try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
+                note: full,
+                reason: buf ? "song-preload-resolved" : "song-preload-resolved-empty",
+                preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3))
+              }); }catch(_){}
+            }).catch(err => {
+              try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
+                note: full,
+                reason: "song-preload-rejected",
+                preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
+                error: err && err.message ? err.message : String(err)
+              }); }catch(_){}
+            });
+          }
+        }
+      }catch(_){}
+    }else if (matchLiveInputSample){
       try{ await window.__preloadPianoBuffer(full); }catch(_){}
     }
-    const autoStopFadeMs = matchLiveInputSample ? 6 : 10;
+    const autoStopFadeMs = isSongPlayback ? 12 : (matchLiveInputSample ? 6 : 10);
     const sampleMeta = {
       via,
       callPerf,
@@ -1638,7 +1668,23 @@ async function playSample(note, octave, durMs, opts={}){
       durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
       autoStopFadeMs: Number.isFinite(Number(durMs)) ? autoStopFadeMs : null
     };
+    try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("playCall", {
+      note: full,
+      durMs: sampleMeta.durMs,
+      autoStopFadeMs,
+      matchLiveInputSample
+    }); }catch(_){}
     const h = window.__playPianoSample(full, sampleMeta);
+    try{
+      if (isSongPlayback && window.__markSongPlaybackDebug){
+        window.__markSongPlaybackDebug(h ? "log" : "drop", {
+          note: full,
+          reason: h ? "play-handle-created" : "play-returned-null",
+          handleType: h && (h.type || typeof h) || null,
+          route: h && h.__liveRoute || null
+        });
+      }
+    }catch(_){}
     if (h){
       try{
         window.__activePianoSampleHandles = window.__activePianoSampleHandles || new Set();
@@ -1655,6 +1701,13 @@ async function playSample(note, octave, durMs, opts={}){
           stopReason: "timer-stop",
           autoStopFadeMs
         }); }catch(e){}
+        try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("stop", {
+          note: full,
+          reason: "timer-stop",
+          autoStopFadeMs,
+          scheduledDurMs: ms,
+          route: h && h.__liveRoute || null
+        }); }catch(_){}
         try{ __stopPianoSampleHandle(h, autoStopFadeMs, { caller:"playSample:auto-stop", via:sampleMeta.via, note:full, sourceType:sampleMeta.sourceType, matchLiveInputSample }); }catch(e){}
         try{ window.__activePianoSampleHandles && window.__activePianoSampleHandles.delete(h); }catch(e){}
       }, ms);
@@ -2247,7 +2300,20 @@ async function playNoteOut(note, durMs, opts={}){
 
     const { name: noteName, octave: useOct } = normalizeNoteInput(note, octave);
     const emitNote = `${noteName}${useOct}`;
-    if (!__allowAudioEmit(emitNote, opts)) return true;
+    if (opts && opts.sourceType === "song"){
+      try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("emit", {
+        note: emitNote,
+        durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
+        matchLiveInputSample: !!opts.matchLiveInputSample
+      }); }catch(_){}
+    }
+    if (!__allowAudioEmit(emitNote, opts)){
+      try{ if (opts && opts.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("skip", {
+        note: emitNote,
+        reason: "allow-audio-emit-blocked-playNoteOut"
+      }); }catch(_){}
+      return true;
+    }
 
     // Built-in piano (embedded GM-ish sample). If not ready, fall back to synth/beep.
     if (soundMode === "gmpiano"){
@@ -4502,6 +4568,50 @@ return trSources[0]?.id || sources[0].id;
     intervals: new Set(),
     rafs: new Set()
   });
+  window.__songPlaybackDebugState = window.__songPlaybackDebugState || {
+    runId: 0,
+    token: 0,
+    mode: "",
+    sourceId: "",
+    startedAt: 0,
+    counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 }
+  };
+  function __resetSongPlaybackDebug(info){
+    const next = {
+      runId: Number(info && info.runId) || 0,
+      token: Number(info && info.token) || 0,
+      mode: String(info && info.mode || ""),
+      sourceId: String(info && info.sourceId || ""),
+      startedAt: performance.now(),
+      counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 }
+    };
+    window.__songPlaybackDebugState = next;
+    try{ console.log("[song debug reset]", next); }catch(_e){}
+    return next;
+  }
+  function __markSongPlaybackDebug(kind, detail){
+    try{
+      const state = window.__songPlaybackDebugState || __resetSongPlaybackDebug();
+      const key = String(kind || "").trim();
+      if (key && Object.prototype.hasOwnProperty.call(state.counts, key)) state.counts[key] += 1;
+      const payload = Object.assign({
+        kind: key || "log",
+        runId: state.runId || 0,
+        token: state.token || 0,
+        mode: state.mode || "",
+        sourceId: state.sourceId || "",
+        sinceResetMs: Number((performance.now() - (state.startedAt || performance.now())).toFixed(3)),
+        counts: Object.assign({}, state.counts)
+      }, detail || {});
+      console.log("[song debug]", payload);
+      return payload;
+    }catch(_e){}
+    return null;
+  }
+  try{
+    window.__resetSongPlaybackDebug = __resetSongPlaybackDebug;
+    window.__markSongPlaybackDebug = __markSongPlaybackDebug;
+  }catch(_e){}
   const __getPreviewRunId = () => Number(__songPlaybackState.runId || 0);
   const __setPreviewRunId = (v) => {
     __songPlaybackState.runId = Number(v) || 0;
@@ -4541,6 +4651,11 @@ return trSources[0]?.id || sources[0].id;
     const resetToStart = !opts || opts.resetToStart !== false;
     if (!opts || opts.invalidateToken !== false) __songPlaybackState.token = __invalidateSongPlayback("song-stop");
     __nextPreviewRunId();
+    try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("stop", {
+      reason: resetToStart ? "stop-playback-reset-to-start" : "stop-playback",
+      nextRunId: __getPreviewRunId(),
+      nextToken: __songPlaybackState.token
+    }); }catch(_e){}
     __setIsAllPlaying(false);
     __clearSongPlaybackAsync();
     try{ if (playAllBtn) playAllBtn.textContent = "一曲再生"; }catch(_e){}
@@ -4843,6 +4958,7 @@ async function __playAllFromTrack(runId, songToken){
       const runId = __stopSongPlayback({ resetToStart:false });
       const songToken = __newSongPlaybackToken();
       __songPlaybackState.token = songToken;
+      try{ __resetSongPlaybackDebug({ runId, token:songToken, mode:"preview8s", sourceId:String(trSel && trSel.value || "") }); }catch(_e){}
       __preview8sFromTrack(runId, songToken);
     });
   }
@@ -4857,6 +4973,7 @@ async function __playAllFromTrack(runId, songToken){
       const runId = __stopSongPlayback({ resetToStart:false });
       const songToken = __newSongPlaybackToken();
       __songPlaybackState.token = songToken;
+      try{ __resetSongPlaybackDebug({ runId, token:songToken, mode:"playAll", sourceId:String(trSel && trSel.value || "") }); }catch(_e){}
       __setIsAllPlaying(true);
       playAllBtn.textContent = "停止";
       __playAllFromTrack(runId, songToken);
@@ -5019,7 +5136,13 @@ useBtn.addEventListener("click", () => {
     const handle = __wrapLiveHtmlAudioHandle(a, note, meta);
     const liveGain = __resolveLiveInputSampleGainMultiplier(note, meta);
     try{
-      if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)) return null;
+      if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)){
+        try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("skip", {
+          note,
+          reason: "allow-audio-emit-blocked-html"
+        }); }catch(_){}
+        return null;
+      }
       try{ a.pause(); }catch(_){ }
       try{ a.currentTime = 0; }catch(_){ }
       const appliedGain = __setLiveHtmlAudioGain(a, liveGain);
@@ -5042,10 +5165,20 @@ useBtn.addEventListener("click", () => {
       }catch(err){
         console.warn("[sample play error]", err);
       }
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
+        note,
+        route: "sample / html audio",
+        activeSameNoteVoices: (window.__activeNoteVoices && window.__activeNoteVoices.get(note) && window.__activeNoteVoices.get(note).length) || 0
+      }); }catch(_){}
       try{ console.log("[live sample] __playPianoSample html", { note, url }); }catch(e){}
       return handle;
     }catch(e){
       console.warn("[sample play error]", e);
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
+        note,
+        reason: "html-play-exception",
+        error: e && e.message ? e.message : String(e)
+      }); }catch(_){}
       return handle;
     }
   };
@@ -5205,11 +5338,23 @@ window.addEventListener("DOMContentLoaded", ()=>{
   };
 
   function __playBufferNow(note, meta){
-    if (window.__allowAudioEmit && !window.__allowAudioEmit(note, meta)) return null;
+    if (window.__allowAudioEmit && !window.__allowAudioEmit(note, meta)){
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("skip", {
+        note,
+        reason: "allow-audio-emit-blocked"
+      }); }catch(_){}
+      return null;
+    }
     const ctx = window.ensureAudio();
     if (!ctx) return null;
     const buf = window.__pianoBufCache.get(note) || __getSharedPianoBuffer(note);
-    if (!buf) return null;
+    if (!buf){
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
+        note,
+        reason: "buffer-missing-at-start"
+      }); }catch(_){}
+      return null;
+    }
     try{
       const src = ctx.createBufferSource();
       src.buffer = buf;
@@ -5247,6 +5392,14 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
       src.connect(g); g.connect(ctx.destination);
       src.start(startAt, trimSec);
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
+        note,
+        route: "sample / webaudio",
+        trimMs,
+        attackMs,
+        startLeadMs: Number(startLeadMs.toFixed(3)),
+        activeSameNoteVoices: (window.__activeNoteVoices && window.__activeNoteVoices.get(note) && window.__activeNoteVoices.get(note).length) || 0
+      }); }catch(_){}
 
       const via = (meta && meta.via) || "unknown";
       try{
@@ -5288,6 +5441,11 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
       return voice;
     }catch(e){
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
+        note,
+        reason: "buffer-start-exception",
+        error: e && e.message ? e.message : String(e)
+      }); }catch(_){}
       return null;
     }
   }
