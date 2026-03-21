@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-016"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-017"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1666,7 +1666,8 @@ async function playSample(note, octave, durMs, opts={}){
       token: opts.token,
       note: full,
       durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
-      autoStopFadeMs: Number.isFinite(Number(durMs)) ? autoStopFadeMs : null
+      autoStopFadeMs: Number.isFinite(Number(durMs)) ? autoStopFadeMs : null,
+      plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null
     };
     try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("playCall", {
       note: full,
@@ -2304,7 +2305,8 @@ async function playNoteOut(note, durMs, opts={}){
       try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("emit", {
         note: emitNote,
         durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
-        matchLiveInputSample: !!opts.matchLiveInputSample
+        matchLiveInputSample: !!opts.matchLiveInputSample,
+        plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null
       }); }catch(_){}
     }
     if (!__allowAudioEmit(emitNote, opts)){
@@ -2318,13 +2320,29 @@ async function playNoteOut(note, durMs, opts={}){
     // Built-in piano (embedded GM-ish sample). If not ready, fall back to synth/beep.
     if (soundMode === "gmpiano"){
       const ok = playGmPiano(noteName, useOct, durMs, 0.95, opts);
-      if (ok) return true;
+      if (ok){
+        try{ if (opts && opts.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
+          note: emitNote,
+          route: "gmpiano",
+          plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+          actualStartPerfNow: performance.now(),
+          actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
+        }); }catch(_e){}
+        return true;
+      }
       // fall through
     }
 
     if (soundMode === "synth"){
       const m = midiFromNote(noteName, useOct);
       synthPiano(freqFromMidi(m), durMs, 0.95, opts);
+      try{ if (opts && opts.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
+        note: emitNote,
+        route: "synth",
+        plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+        actualStartPerfNow: performance.now(),
+        actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
+      }); }catch(_e){}
       return true;
     }
 
@@ -2347,6 +2365,13 @@ async function playNoteOut(note, durMs, opts={}){
       }catch(_){
         try{ beep(880, Math.max(0.08, durMs/1000), 0.05, opts); }catch(__){}
       }
+      try{ if (opts && opts.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
+        note: emitNote,
+        route: "sample-fallback",
+        plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+        actualStartPerfNow: performance.now(),
+        actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
+      }); }catch(_e){}
       setAudioStatus(`サンプル利用不可: ${noteName}${useOct} → 内蔵音にフォールバック`);
       return true;
     }
@@ -2355,6 +2380,13 @@ async function playNoteOut(note, durMs, opts={}){
     if (soundMode === "beep"){
       const m = midiFromNote(noteName, useOct);
       beep(freqFromMidi(m), Math.max(0.08, durMs/1000), 0.05, opts);
+      try{ if (opts && opts.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
+        note: emitNote,
+        route: "beep",
+        plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+        actualStartPerfNow: performance.now(),
+        actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
+      }); }catch(_e){}
       return true;
     }
 
@@ -2365,6 +2397,13 @@ async function playNoteOut(note, durMs, opts={}){
     }catch(_){
       try{ beep(880, Math.max(0.08, durMs/1000), 0.05, opts); }catch(__){}
     }
+    try{ if (opts && opts.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
+      note: emitNote,
+      route: "default-fallback",
+      plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+      actualStartPerfNow: performance.now(),
+      actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
+    }); }catch(_e){}
     return true;
   }
 
@@ -4576,6 +4615,21 @@ return trSources[0]?.id || sources[0].id;
     startedAt: 0,
     counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 }
   };
+  window.__songLengthDebugState = window.__songLengthDebugState || {
+    runId: 0,
+    token: 0,
+    mode: "",
+    sourceId: "",
+    startedPerfNow: 0,
+    startedAudioTime: null,
+    expectedSongEndSec: 0,
+    actualSongElapsedSec: null,
+    actualSongElapsedAudioSec: null,
+    counts: { emit:0, start:0, drop:0 },
+    noteDelays: [],
+    finalized: false,
+    finalizedReason: ""
+  };
   function __resetSongPlaybackDebug(info){
     const next = {
       runId: Number(info && info.runId) || 0,
@@ -4588,6 +4642,135 @@ return trSources[0]?.id || sources[0].id;
     window.__songPlaybackDebugState = next;
     try{ console.log("[song debug reset]", next); }catch(_e){}
     return next;
+  }
+  function __getSongLengthDebugAudioTime(){
+    try{
+      const ctx = window.audioCtx || (typeof window.ensureAudioCreated === "function" ? window.ensureAudioCreated() : null);
+      const t = ctx && Number(ctx.currentTime);
+      return Number.isFinite(t) ? t : null;
+    }catch(_e){}
+    return null;
+  }
+  function __getSongLengthDebugNoteTimeSec(note, tempoMap){
+    if (!note || typeof note !== "object") return 0;
+    const keys = ["plannedTimeSec", "timeSec", "whenSec", "startSec", "startTimeSec"];
+    for (const key of keys){
+      const v = Number(note[key]);
+      if (Number.isFinite(v)) return Math.max(0, v);
+    }
+    const rawTime = Number(note.time);
+    if (Number.isFinite(rawTime)) return Math.max(0, rawTime);
+    const tick = Number(note.__tick ?? note.tick ?? note.startTick);
+    if (Number.isFinite(tick)){
+      return Math.max(0, __ticksToMs(0, tick, tempoMap, __parsed && __parsed.ticksPerBeat, __parsed && __parsed.ticksPerSecond) / 1000);
+    }
+    return 0;
+  }
+  function __getSongLengthDebugDurationSec(note, tempoMap){
+    if (!note || typeof note !== "object") return 0;
+    const keys = ["durationSec", "durSec", "lenSec"];
+    for (const key of keys){
+      const v = Number(note[key]);
+      if (Number.isFinite(v) && v >= 0) return v;
+    }
+    const rawDuration = Number(note.duration);
+    if (Number.isFinite(rawDuration) && rawDuration >= 0) return rawDuration;
+    const tick = Number(note.__tick ?? note.tick ?? note.startTick);
+    const durTick = Number(note.__durTick ?? note.durTick ?? note.durationTick ?? note.lengthTick);
+    if (Number.isFinite(tick) && Number.isFinite(durTick) && durTick >= 0){
+      return Math.max(0, __ticksToMs(tick, tick + durTick, tempoMap, __parsed && __parsed.ticksPerBeat, __parsed && __parsed.ticksPerSecond) / 1000);
+    }
+    return 0;
+  }
+  function __computeExpectedSongEndSec(notes, tempoMap){
+    let endSec = 0;
+    const list = Array.isArray(notes) ? notes : [];
+    for (let i=0;i<list.length;i++){
+      const note = list[i];
+      const startSec = __getSongLengthDebugNoteTimeSec(note, tempoMap);
+      const durSec = __getSongLengthDebugDurationSec(note, tempoMap);
+      endSec = Math.max(endSec, startSec + Math.max(0, durSec));
+    }
+    return Number(endSec.toFixed(6));
+  }
+  function __resetSongLengthDebug(info){
+    const next = {
+      runId: Number(info && info.runId) || 0,
+      token: Number(info && info.token) || 0,
+      mode: String(info && info.mode || ""),
+      sourceId: String(info && info.sourceId || ""),
+      startedPerfNow: performance.now(),
+      startedAudioTime: __getSongLengthDebugAudioTime(),
+      expectedSongEndSec: Math.max(0, Number(info && info.expectedSongEndSec) || 0),
+      actualSongElapsedSec: null,
+      actualSongElapsedAudioSec: null,
+      counts: { emit:0, start:0, drop:0 },
+      noteDelays: [],
+      finalized: false,
+      finalizedReason: ""
+    };
+    window.__songLengthDebugState = next;
+    try{ console.log("[song length debug reset]", next); }catch(_e){}
+    return next;
+  }
+  function __markSongLengthDebug(kind, detail){
+    try{
+      const state = window.__songLengthDebugState || __resetSongLengthDebug();
+      const key = String(kind || "").trim();
+      if (key && Object.prototype.hasOwnProperty.call(state.counts, key)) state.counts[key] += 1;
+      if (key === "start"){
+        const actualStartPerfNow = Number(detail && detail.actualStartPerfNow);
+        const plannedTimeSec = Number(detail && detail.plannedTimeSec);
+        if (Number.isFinite(actualStartPerfNow) && Number.isFinite(plannedTimeSec) && state.startedPerfNow){
+          const actualOffsetSec = (actualStartPerfNow - state.startedPerfNow) / 1000;
+          const delaySec = actualOffsetSec - plannedTimeSec;
+          if (Math.abs(delaySec) >= 0.015){
+            state.noteDelays.push({
+              note: detail && detail.note || "",
+              plannedTimeSec: Number(plannedTimeSec.toFixed(6)),
+              actualOffsetSec: Number(actualOffsetSec.toFixed(6)),
+              delayMs: Number((delaySec * 1000).toFixed(3)),
+              route: detail && detail.route || null
+            });
+          }
+        }
+      }
+      return state;
+    }catch(_e){}
+    return null;
+  }
+  function __finalizeSongLengthDebug(reason, extra){
+    try{
+      const state = window.__songLengthDebugState;
+      if (!state || state.finalized) return state || null;
+      state.finalized = true;
+      state.finalizedReason = String(reason || extra && extra.reason || "completed");
+      state.actualSongElapsedSec = Number(((performance.now() - (state.startedPerfNow || performance.now())) / 1000).toFixed(6));
+      const nowAudioTime = __getSongLengthDebugAudioTime();
+      state.actualSongElapsedAudioSec = (Number.isFinite(nowAudioTime) && Number.isFinite(state.startedAudioTime))
+        ? Number((nowAudioTime - state.startedAudioTime).toFixed(6))
+        : null;
+      const summary = Object.assign({
+        reason: state.finalizedReason,
+        runId: state.runId || 0,
+        token: state.token || 0,
+        mode: state.mode || "",
+        sourceId: state.sourceId || "",
+        expectedSongEndSec: Number((Number(state.expectedSongEndSec) || 0).toFixed(6)),
+        actualSongElapsedSec: state.actualSongElapsedSec,
+        actualSongElapsedAudioSec: state.actualSongElapsedAudioSec,
+        diffSec: Number((state.actualSongElapsedSec - (Number(state.expectedSongEndSec) || 0)).toFixed(6)),
+        emittedCount: Number(state.counts.emit || 0),
+        startedCount: Number(state.counts.start || 0),
+        droppedCount: Number(state.counts.drop || 0)
+      }, extra || {});
+      console.log("[song length compare]", summary);
+      if (state.noteDelays && state.noteDelays.length){
+        console.log("[song note delays >= 15ms]", state.noteDelays);
+      }
+      return summary;
+    }catch(_e){}
+    return null;
   }
   function __markSongPlaybackDebug(kind, detail){
     try{
@@ -4604,6 +4787,7 @@ return trSources[0]?.id || sources[0].id;
         counts: Object.assign({}, state.counts)
       }, detail || {});
       console.log("[song debug]", payload);
+      if (key === "emit" || key === "start" || key === "drop") __markSongLengthDebug(key, payload);
       return payload;
     }catch(_e){}
     return null;
@@ -4611,6 +4795,10 @@ return trSources[0]?.id || sources[0].id;
   try{
     window.__resetSongPlaybackDebug = __resetSongPlaybackDebug;
     window.__markSongPlaybackDebug = __markSongPlaybackDebug;
+    window.__resetSongLengthDebug = __resetSongLengthDebug;
+    window.__markSongLengthDebug = __markSongLengthDebug;
+    window.__finalizeSongLengthDebug = __finalizeSongLengthDebug;
+    window.__computeExpectedSongEndSec = __computeExpectedSongEndSec;
   }catch(_e){}
   const __getPreviewRunId = () => Number(__songPlaybackState.runId || 0);
   const __setPreviewRunId = (v) => {
@@ -4656,6 +4844,7 @@ return trSources[0]?.id || sources[0].id;
       nextRunId: __getPreviewRunId(),
       nextToken: __songPlaybackState.token
     }); }catch(_e){}
+    try{ window.__finalizeSongLengthDebug && window.__finalizeSongLengthDebug(resetToStart ? "song-stop-reset-to-start" : "song-stop"); }catch(_e){}
     __setIsAllPlaying(false);
     __clearSongPlaybackAsync();
     try{ if (playAllBtn) playAllBtn.textContent = "一曲再生"; }catch(_e){}
@@ -4925,17 +5114,20 @@ async function __playAllFromTrack(runId, songToken){
       if (!sourceId){ alert("トラック/チャンネルを選んでください"); return; }
       const notes = buildSongFromSource(__parsed, sourceId); // [{n,o,d,__tick,__dtTick,__durTick}]
       const tempoMap = __getGlobalTempoEvents(__parsed);
+      const expectedSongEndSec = __computeExpectedSongEndSec(notes, tempoMap);
+      try{ window.__resetSongLengthDebug && window.__resetSongLengthDebug({ runId, token:songToken, mode:"playAll", sourceId, expectedSongEndSec }); }catch(_e){}
       for (let i=0;i<notes.length;i++){
         if (runId !== __getPreviewRunId()) break;
         const nn = notes[i];
         const gapTick = Number.isFinite(nn.__dtTick) ? nn.__dtTick : Math.floor((__parsed.ticksPerBeat||480)/2);
         const durTick = Number.isFinite(nn.__durTick) ? nn.__durTick : Math.max(1, Math.floor(gapTick*0.8));
+        const plannedTimeSec = __getSongLengthDebugNoteTimeSec(nn, tempoMap);
         const dur = Math.max(60, Math.round(__ticksToMs(nn.__tick, nn.__tick + durTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         const noteObj = (nn && typeof nn === "object") ? nn : { n: nn, o: parseInt(octSel.value || "4", 10) };
         const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
         if (runId !== __getPreviewRunId()) break;
-        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, matchLiveInputSample:true });
+        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, matchLiveInputSample:true, plannedTimeSec });
         if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         const stillActive = await __songPlaybackSleep(runId, gapMs);
@@ -4945,6 +5137,7 @@ async function __playAllFromTrack(runId, songToken){
       console.error(e);
       alert("再生失敗: " + (e && e.message ? e.message : String(e)));
     }finally{
+      try{ window.__finalizeSongLengthDebug && window.__finalizeSongLengthDebug(runId === __getPreviewRunId() ? "song-ended" : "song-cancelled"); }catch(_e){}
       // reset button state if this run is the latest (or cancelled)
       if (runId === __getPreviewRunId()){
         __setIsAllPlaying(false);
@@ -5168,6 +5361,9 @@ useBtn.addEventListener("click", () => {
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
         note,
         route: "sample / html audio",
+        plannedTimeSec: Number.isFinite(Number(meta && meta.plannedTimeSec)) ? Number(meta.plannedTimeSec) : null,
+        actualStartPerfNow: performance.now(),
+        actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null,
         activeSameNoteVoices: (window.__activeNoteVoices && window.__activeNoteVoices.get(note) && window.__activeNoteVoices.get(note).length) || 0
       }); }catch(_){}
       try{ console.log("[live sample] __playPianoSample html", { note, url }); }catch(e){}
@@ -5397,6 +5593,9 @@ window.addEventListener("DOMContentLoaded", ()=>{
         route: "sample / webaudio",
         trimMs,
         attackMs,
+        plannedTimeSec: Number.isFinite(Number(meta && meta.plannedTimeSec)) ? Number(meta.plannedTimeSec) : null,
+        actualStartPerfNow: performance.now() + Math.max(0, startLeadMs),
+        actualStartAudioTime: startAt,
         startLeadMs: Number(startLeadMs.toFixed(3)),
         activeSameNoteVoices: (window.__activeNoteVoices && window.__activeNoteVoices.get(note) && window.__activeNoteVoices.get(note).length) || 0
       }); }catch(_){}
