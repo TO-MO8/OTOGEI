@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-019"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-020"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1712,7 +1712,9 @@ async function playSample(note, octave, durMs, opts={}){
       note: full,
       durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
       autoStopFadeMs: Number.isFinite(Number(durMs)) ? autoStopFadeMs : null,
-      plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null
+      plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+      songStartAudioTime: Number.isFinite(Number(opts.songStartAudioTime)) ? Number(opts.songStartAudioTime) : null,
+      scheduledAudioTime: Number.isFinite(Number(opts.scheduledAudioTime)) ? Number(opts.scheduledAudioTime) : null
     };
     try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("playCall", {
       note: full,
@@ -1739,24 +1741,42 @@ async function playSample(note, octave, durMs, opts={}){
     }
     if (h && Number.isFinite(durMs)){
       const ms = Math.max(20, durMs|0);
-      setTimeout(()=>{
-        try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("stop-request", full, sampleMeta, {
-          route: h && h.__liveRoute || null,
-          releaseMs: autoStopFadeMs,
-          scheduledDurMs: ms,
-          stopReason: "timer-stop",
-          autoStopFadeMs
-        }); }catch(e){}
-        try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("stop", {
-          note: full,
-          reason: "timer-stop",
-          autoStopFadeMs,
-          scheduledDurMs: ms,
-          route: h && h.__liveRoute || null
-        }); }catch(_){}
-        try{ __stopPianoSampleHandle(h, autoStopFadeMs, { caller:"playSample:auto-stop", via:sampleMeta.via, note:full, sourceType:sampleMeta.sourceType, matchLiveInputSample }); }catch(e){}
-        try{ window.__activePianoSampleHandles && window.__activePianoSampleHandles.delete(h); }catch(e){}
-      }, ms);
+      const __scheduleAutoStop = (handle) => {
+        const liveHandle = handle || h;
+        const ctx = window.audioCtx || (typeof window.ensureAudioCreated === "function" ? window.ensureAudioCreated() : null);
+        const nowAudioTime = ctx && Number.isFinite(Number(ctx.currentTime)) ? Number(ctx.currentTime) : null;
+        const scheduledStartAudioTime = Number.isFinite(Number(liveHandle && liveHandle.__scheduledStartAudioTime))
+          ? Number(liveHandle.__scheduledStartAudioTime)
+          : (Number.isFinite(Number(sampleMeta.scheduledAudioTime)) ? Number(sampleMeta.scheduledAudioTime) : null);
+        const leadMs = (Number.isFinite(scheduledStartAudioTime) && Number.isFinite(nowAudioTime))
+          ? Math.max(0, Math.round((scheduledStartAudioTime - nowAudioTime) * 1000))
+          : 0;
+        setTimeout(()=>{
+          try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("stop-request", full, sampleMeta, {
+            route: liveHandle && liveHandle.__liveRoute || null,
+            releaseMs: autoStopFadeMs,
+            scheduledDurMs: ms,
+            stopReason: "timer-stop",
+            autoStopFadeMs
+          }); }catch(e){}
+          try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("stop", {
+            note: full,
+            reason: "timer-stop",
+            autoStopFadeMs,
+            scheduledDurMs: ms,
+            route: liveHandle && liveHandle.__liveRoute || null
+          }); }catch(_){}
+          try{ __stopPianoSampleHandle(liveHandle, autoStopFadeMs, { caller:"playSample:auto-stop", via:sampleMeta.via, note:full, sourceType:sampleMeta.sourceType, matchLiveInputSample }); }catch(e){}
+          try{ window.__activePianoSampleHandles && window.__activePianoSampleHandles.delete(liveHandle); }catch(e){}
+        }, leadMs + ms);
+      };
+      if (h.type === "pending" && h.__readyPromise && typeof h.__readyPromise.then === "function"){
+        h.__readyPromise.then(resolvedHandle => {
+          if (resolvedHandle) __scheduleAutoStop(resolvedHandle);
+        }).catch(()=>{});
+      }else{
+        __scheduleAutoStop(h);
+      }
     }
     return true;
   }
@@ -5336,7 +5356,18 @@ async function __playAllFromTrack(runId, songToken){
       const notes = buildSongFromSource(__parsed, sourceId); // [{n,o,d,__tick,__dtTick,__durTick}]
       const tempoMap = __getGlobalTempoEvents(__parsed);
       const expectedSongEndSec = __computeExpectedSongEndSec(notes, tempoMap);
+      const songStartLeadSec = 0.12;
+      const songStartPerfNow = performance.now() + (songStartLeadSec * 1000);
+      const songAudioCtx = (typeof window.ensureAudioCreated === "function" ? window.ensureAudioCreated() : null) || window.audioCtx || null;
+      const currentAudioTime = songAudioCtx && Number(songAudioCtx.currentTime);
+      const songStartAudioTime = Number.isFinite(currentAudioTime) ? (currentAudioTime + songStartLeadSec) : null;
       try{ window.__resetSongLengthDebug && window.__resetSongLengthDebug({ runId, token:songToken, mode:"playAll", sourceId, expectedSongEndSec }); }catch(_e){}
+      try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
+        reason: "song-start-anchor",
+        songStartLeadSec: Number(songStartLeadSec.toFixed(3)),
+        songStartPerfNow: Number(songStartPerfNow.toFixed(3)),
+        songStartAudioTime: Number.isFinite(songStartAudioTime) ? Number(songStartAudioTime.toFixed(6)) : null
+      }); }catch(_e){}
       for (let i=0;i<notes.length;i++){
         if (runId !== __getPreviewRunId()) break;
         const nn = notes[i];
@@ -5347,12 +5378,21 @@ async function __playAllFromTrack(runId, songToken){
         const noteObj = (nn && typeof nn === "object") ? nn : { n: nn, o: parseInt(octSel.value || "4", 10) };
         const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
+        const scheduleLeadMs = 25;
+        const waitMs = Math.max(0, Math.round((songStartPerfNow + (plannedTimeSec * 1000)) - performance.now() - scheduleLeadMs));
+        if (waitMs > 0){
+          const stillActiveBeforeStart = await __songPlaybackSleep(runId, waitMs);
+          if (!stillActiveBeforeStart) break;
+        }
         if (runId !== __getPreviewRunId()) break;
-        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, matchLiveInputSample:true, plannedTimeSec });
-        if (runId !== __getPreviewRunId()) break;
-        const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
-        const stillActive = await __songPlaybackSleep(runId, gapMs);
-        if (!stillActive) break;
+        await window.playNoteOut(playNote, dur, {
+          sourceType:"song",
+          token:songToken,
+          matchLiveInputSample:true,
+          plannedTimeSec,
+          songStartAudioTime,
+          scheduledAudioTime: Number.isFinite(songStartAudioTime) ? (songStartAudioTime + plannedTimeSec) : null
+        });
       }
     }catch(e){
       console.error(e);
@@ -5782,7 +5822,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
       const g = ctx.createGain();
       const nowCtx = ctx.currentTime;
-      const startAt = nowCtx;
+      const scheduledAudioTime = Number(meta && meta.scheduledAudioTime);
+      const startAt = Number.isFinite(scheduledAudioTime) ? Math.max(nowCtx, scheduledAudioTime) : nowCtx;
       const matchLiveProfile = __shouldMatchLiveInputSampleProfile(meta);
       const trimMs = matchLiveProfile ? 3 : 0;
       const trimSec = Math.max(0, Math.min(buf.duration - 0.001, trimMs / 1000));
@@ -5839,6 +5880,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const voice = { src, gain: g, startedAt: startAt, note };
       voice.type = "buffer";
       voice.__liveRoute = "sample / webaudio";
+      voice.__scheduledStartAudioTime = startAt;
       try{ window.__captureLiveInputDebugMeter && window.__captureLiveInputDebugMeter(note, meta, { route:"sample / webaudio", gainMultiplier: liveGain, handle: voice }); }catch(_){ }
       __ensureLiveVoiceMeta(voice, Object.assign({}, meta, { note, sample: note }));
       window.__activeNoteVoices = window.__activeNoteVoices || new Map();
@@ -5924,6 +5966,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
   window.__playPianoSample = function(note, meta){
     try{ window.__logPlayPianoSampleEntry("__playPianoSample enter", note, meta); }catch(_){ }
     const isLiveInput = __safeIsLiveInputSampleMeta(meta);
+    const isScheduledSong = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
+    const shouldWaitForBuffer = isLiveInput || isScheduledSong;
     // If buffer ready, this is the fastest path
     const h = __playBufferNow(note, meta);
     if (h){
@@ -5931,7 +5975,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
       return window.__normalizeLiveSampleHandle(h, meta);
     }
     // Live input keeps a stop-capable handle and waits for the stop-safe path first.
-    if (isLiveInput){
+    if (shouldWaitForBuffer){
       const pending = window.__normalizeLiveSampleHandle({
         type: "pending",
         note,
