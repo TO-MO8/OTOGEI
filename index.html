@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-017"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-018"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -830,7 +830,24 @@ function __allowAudioEmit(note, opts){
       try{ console.log("[song emit blocked stale token]", { note, token, currentToken }); }catch(_e){}
       return false;
     }
-    try{ console.log("[song emit allowed]", { note, token }); }catch(_e){}
+    try{
+      const debugState = window.__songPlaybackDebugState || null;
+      const emitKey = `${token}:${note}`;
+      const allowCounts = debugState && debugState.allowKeyCounts ? debugState.allowKeyCounts : null;
+      const allowCheckCount = allowCounts ? ((Number(allowCounts[emitKey] || 0) + 1) || 1) : 1;
+      if (allowCounts) allowCounts[emitKey] = allowCheckCount;
+      const emitKeyCount = debugState && debugState.emitKeyCounts ? Number(debugState.emitKeyCounts[emitKey] || 0) : 0;
+      console.log("[song emit allowed]", {
+        note,
+        token,
+        emitKey,
+        allowCheckCount,
+        repeatedAllowCheck: allowCheckCount > 1,
+        emitKeyCount,
+        repeatedEmitRequest: emitKeyCount > 1,
+        caller: __getSongEmitAllowCaller()
+      });
+    }catch(_e){}
     return true;
   }
   if (sourceType === "question"){
@@ -4613,7 +4630,9 @@ return trSources[0]?.id || sources[0].id;
     mode: "",
     sourceId: "",
     startedAt: 0,
-    counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 }
+    counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 },
+    emitKeyCounts: Object.create(null),
+    allowKeyCounts: Object.create(null)
   };
   window.__songLengthDebugState = window.__songLengthDebugState || {
     runId: 0,
@@ -4627,9 +4646,76 @@ return trSources[0]?.id || sources[0].id;
     actualSongElapsedAudioSec: null,
     counts: { emit:0, start:0, drop:0 },
     noteDelays: [],
+    routeStats: Object.create(null),
     finalized: false,
     finalizedReason: ""
   };
+  function __normalizeSongDebugRoute(route){
+    const raw = String(route || "").toLowerCase();
+    if (raw.includes("html")) return "html";
+    if (raw.includes("webaudio") || raw === "gmpiano") return "webaudio";
+    if (raw === "synth") return "synth";
+    return "fallback";
+  }
+  function __ensureSongRouteDebugState(state, route){
+    const group = __normalizeSongDebugRoute(route);
+    if (!state.routeStats) state.routeStats = Object.create(null);
+    if (!state.routeStats[group]){
+      state.routeStats[group] = { startedCount:0, droppedCount:0, delaySumMs:0, delayCount:0 };
+    }
+    return { group, stats: state.routeStats[group] };
+  }
+  function __getSongEmitAllowCaller(){
+    try{
+      const stack = String((new Error()).stack || "").split("\n");
+      for (let i=1;i<stack.length;i++){
+        const line = String(stack[i] || "").trim();
+        if (!line || line.includes("__allowAudioEmit")) continue;
+        const m = /at\s+([^\s(]+)/.exec(line);
+        return m && m[1] ? m[1] : line;
+      }
+    }catch(_e){}
+    return "unknown";
+  }
+  function __computeSongDelayPercentile(values, p){
+    const list = Array.isArray(values) ? values : [];
+    if (!list.length) return null;
+    const pos = Math.min(list.length - 1, Math.max(0, (list.length - 1) * p));
+    const lower = Math.floor(pos);
+    const upper = Math.ceil(pos);
+    const weight = pos - lower;
+    const value = lower === upper ? list[lower] : (list[lower] + (list[upper] - list[lower]) * weight);
+    return Number(value.toFixed(3));
+  }
+  function __computeSongDelayStats(entries){
+    const list = (Array.isArray(entries) ? entries : []).filter(item => item && Number.isFinite(Number(item.delayMs)));
+    if (!list.length){
+      return {
+        avgDelayMs: null,
+        maxDelayMs: null,
+        p50DelayMs: null,
+        p95DelayMs: null,
+        positiveDelayCount: 0,
+        negativeDelayCount: 0
+      };
+    }
+    const values = list.map(item => Number(item.delayMs)).sort((a,b)=>a-b);
+    const sum = values.reduce((acc, value)=>acc + value, 0);
+    let positiveDelayCount = 0;
+    let negativeDelayCount = 0;
+    for (let i=0;i<values.length;i++){
+      if (values[i] > 0) positiveDelayCount += 1;
+      else if (values[i] < 0) negativeDelayCount += 1;
+    }
+    return {
+      avgDelayMs: Number((sum / values.length).toFixed(3)),
+      maxDelayMs: Number(values[values.length - 1].toFixed(3)),
+      p50DelayMs: __computeSongDelayPercentile(values, 0.5),
+      p95DelayMs: __computeSongDelayPercentile(values, 0.95),
+      positiveDelayCount,
+      negativeDelayCount
+    };
+  }
   function __resetSongPlaybackDebug(info){
     const next = {
       runId: Number(info && info.runId) || 0,
@@ -4637,7 +4723,9 @@ return trSources[0]?.id || sources[0].id;
       mode: String(info && info.mode || ""),
       sourceId: String(info && info.sourceId || ""),
       startedAt: performance.now(),
-      counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 }
+      counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 },
+      emitKeyCounts: Object.create(null),
+      allowKeyCounts: Object.create(null)
     };
     window.__songPlaybackDebugState = next;
     try{ console.log("[song debug reset]", next); }catch(_e){}
@@ -4706,6 +4794,7 @@ return trSources[0]?.id || sources[0].id;
       actualSongElapsedAudioSec: null,
       counts: { emit:0, start:0, drop:0 },
       noteDelays: [],
+      routeStats: Object.create(null),
       finalized: false,
       finalizedReason: ""
     };
@@ -4721,19 +4810,26 @@ return trSources[0]?.id || sources[0].id;
       if (key === "start"){
         const actualStartPerfNow = Number(detail && detail.actualStartPerfNow);
         const plannedTimeSec = Number(detail && detail.plannedTimeSec);
+        const routeInfo = __ensureSongRouteDebugState(state, detail && detail.route);
+        routeInfo.stats.startedCount += 1;
         if (Number.isFinite(actualStartPerfNow) && Number.isFinite(plannedTimeSec) && state.startedPerfNow){
           const actualOffsetSec = (actualStartPerfNow - state.startedPerfNow) / 1000;
           const delaySec = actualOffsetSec - plannedTimeSec;
-          if (Math.abs(delaySec) >= 0.015){
-            state.noteDelays.push({
-              note: detail && detail.note || "",
-              plannedTimeSec: Number(plannedTimeSec.toFixed(6)),
-              actualOffsetSec: Number(actualOffsetSec.toFixed(6)),
-              delayMs: Number((delaySec * 1000).toFixed(3)),
-              route: detail && detail.route || null
-            });
-          }
+          const delayMs = Number((delaySec * 1000).toFixed(3));
+          state.noteDelays.push({
+            note: detail && detail.note || "",
+            plannedTimeSec: Number(plannedTimeSec.toFixed(6)),
+            actualOffsetSec: Number(actualOffsetSec.toFixed(6)),
+            delayMs,
+            route: detail && detail.route || null,
+            routeGroup: routeInfo.group
+          });
+          routeInfo.stats.delaySumMs += delayMs;
+          routeInfo.stats.delayCount += 1;
         }
+      }else if (key === "drop"){
+        const routeInfo = __ensureSongRouteDebugState(state, detail && detail.route);
+        routeInfo.stats.droppedCount += 1;
       }
       return state;
     }catch(_e){}
@@ -4762,11 +4858,31 @@ return trSources[0]?.id || sources[0].id;
         diffSec: Number((state.actualSongElapsedSec - (Number(state.expectedSongEndSec) || 0)).toFixed(6)),
         emittedCount: Number(state.counts.emit || 0),
         startedCount: Number(state.counts.start || 0),
-        droppedCount: Number(state.counts.drop || 0)
+        droppedCount: Number(state.counts.drop || 0),
+        startRate: Number(((Number(state.counts.emit) || 0) > 0 ? (Number(state.counts.start || 0) / Number(state.counts.emit || 0)) : 0).toFixed(4))
       }, extra || {});
+      const delaySummary = __computeSongDelayStats(state.noteDelays);
+      Object.assign(summary, delaySummary);
+      const routeSummary = {};
+      ["html", "webaudio", "synth", "fallback"].forEach(group => {
+        const info = state.routeStats && state.routeStats[group];
+        routeSummary[group] = {
+          startedCount: Number(info && info.startedCount || 0),
+          droppedCount: Number(info && info.droppedCount || 0),
+          avgDelayMs: Number.isFinite(Number(info && info.delayCount))
+            && Number(info && info.delayCount) > 0
+            ? Number((Number(info.delaySumMs || 0) / Number(info.delayCount || 1)).toFixed(3))
+            : null
+        };
+      });
+      const worstDelays = (Array.isArray(state.noteDelays) ? state.noteDelays.slice() : [])
+        .sort((a,b)=>Math.abs(Number(b && b.delayMs || 0)) - Math.abs(Number(a && a.delayMs || 0)))
+        .slice(0, 20);
       console.log("[song length compare]", summary);
-      if (state.noteDelays && state.noteDelays.length){
-        console.log("[song note delays >= 15ms]", state.noteDelays);
+      console.log("[song timing summary]", summary);
+      console.log("[song route summary]", routeSummary);
+      if (worstDelays.length){
+        console.log("[song worst delays]", worstDelays);
       }
       return summary;
     }catch(_e){}
@@ -4777,6 +4893,17 @@ return trSources[0]?.id || sources[0].id;
       const state = window.__songPlaybackDebugState || __resetSongPlaybackDebug();
       const key = String(kind || "").trim();
       if (key && Object.prototype.hasOwnProperty.call(state.counts, key)) state.counts[key] += 1;
+      const token = Number(state.token || 0);
+      const note = String(detail && detail.note || "");
+      const emitKey = (token && note) ? `${token}:${note}` : "";
+      let emitKeyCount = null;
+      if (key === "emit" && emitKey){
+        if (!state.emitKeyCounts) state.emitKeyCounts = Object.create(null);
+        emitKeyCount = Number(state.emitKeyCounts[emitKey] || 0) + 1;
+        state.emitKeyCounts[emitKey] = emitKeyCount;
+      }else if (emitKey && state.emitKeyCounts){
+        emitKeyCount = Number(state.emitKeyCounts[emitKey] || 0);
+      }
       const payload = Object.assign({
         kind: key || "log",
         runId: state.runId || 0,
@@ -4786,6 +4913,11 @@ return trSources[0]?.id || sources[0].id;
         sinceResetMs: Number((performance.now() - (state.startedAt || performance.now())).toFixed(3)),
         counts: Object.assign({}, state.counts)
       }, detail || {});
+      if (emitKey){
+        payload.emitKey = emitKey;
+        payload.emitKeyCount = emitKeyCount;
+        payload.emitDuplicate = emitKeyCount > 1;
+      }
       console.log("[song debug]", payload);
       if (key === "emit" || key === "start" || key === "drop") __markSongLengthDebug(key, payload);
       return payload;
