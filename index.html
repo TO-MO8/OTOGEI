@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-025"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-026"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -4764,14 +4764,26 @@ return trSources[0]?.id || sources[0].id;
     if (!state.noteStates[eventKey]){
       state.noteStates[eventKey] = {
         songEventId: eventKey,
+        note: "",
+        plannedTimeSec: null,
+        routeCandidate: "",
         emitSummaryCounted: false,
+        emittedCount: 0,
+        playCallCount: 0,
         startedCount: 0,
+        skipCount: 0,
+        skippedBeforePlayCallCount: 0,
         dropCount: 0,
         fatalDropCount: 0,
         secondaryDropCount: 0,
         startSummaryCounted: false,
         secondaryDropSummaryCounted: false,
         secondaryDropAfterPrimarySeen: false,
+        preloadNotReadySeen: false,
+        tokenStoppedBeforeStartSeen: false,
+        filteredNonplayableSeen: false,
+        playCallNoStartSeen: false,
+        terminalReason: "",
         lastStartRoute: "",
         lastStartPerfNow: null
       };
@@ -4793,6 +4805,28 @@ return trSources[0]?.id || sources[0].id;
     if (raw.includes("webaudio") || raw === "gmpiano") return "webaudio";
     if (raw === "synth") return "synth";
     return "fallback";
+  }
+  function __normalizeSongTerminalReason(reason){
+    const raw = String(reason || "").trim();
+    if (!raw) return "";
+    if (raw === "primary-started") return raw;
+    if (raw === "filtered-nonplayable") return raw;
+    if (raw === "preload-not-ready" || raw === "song-preload-rejected") return "preload-not-ready";
+    if (raw === "playcall-no-start" || raw === "play-returned-null" || raw === "primary-start-failed") return "playcall-no-start";
+    if (raw === "token-stopped-before-start" || raw === "token-stopped" || raw.startsWith("allow-audio-emit-blocked")) return "token-stopped-before-start";
+    if (raw === "skipped-before-playcall") return raw;
+    return raw;
+  }
+  function __deriveSongPlaybackTerminalReason(noteState){
+    if (!noteState) return "";
+    if (Number(noteState.startedCount || 0) > 0) return "primary-started";
+    if (noteState.filteredNonplayableSeen) return "filtered-nonplayable";
+    if (noteState.tokenStoppedBeforeStartSeen) return "token-stopped-before-start";
+    if (noteState.preloadNotReadySeen) return "preload-not-ready";
+    if (Number(noteState.skippedBeforePlayCallCount || 0) > 0) return "skipped-before-playcall";
+    if (Number(noteState.playCallCount || 0) > 0 || noteState.playCallNoStartSeen) return "playcall-no-start";
+    if (Number(noteState.emittedCount || 0) > 0) return "skipped-before-playcall";
+    return "";
   }
   function __ensureSongRouteDebugState(state, route){
     const group = __normalizeSongDebugRoute(route);
@@ -5052,15 +5086,55 @@ return trSources[0]?.id || sources[0].id;
       let primaryStartedEventCount = 0;
       let secondaryDropAfterPrimaryCount = 0;
       let emittedButNeverStartedCount = 0;
+      let emittedButNeverPlayCalledCount = 0;
+      let playCalledButNeverStartedCount = 0;
+      let skippedBeforePlayCallCount = 0;
+      const terminalReasonCounts = Object.create(null);
+      const songEventStats = Object.create(null);
+      const missingStartsSample = [];
+      const playbackSongEventIds = (playbackState && Array.isArray(playbackState.songEventIdOrder) && playbackState.songEventIdOrder.length)
+        ? playbackState.songEventIdOrder.slice()
+        : (Array.isArray(state.songEventIdOrder) ? state.songEventIdOrder.slice() : []);
       if (playbackNoteStates){
-        Object.keys(playbackNoteStates).forEach(eventKey => {
+        playbackSongEventIds.forEach(eventKey => {
           const noteState = playbackNoteStates[eventKey];
           if (!noteState) return;
           const started = Number(noteState.startedCount || 0) > 0;
-          const emitted = !!noteState.emitSummaryCounted;
+          const emittedCount = Number(noteState.emittedCount || 0);
+          const playCallCount = Number(noteState.playCallCount || 0);
+          const emitted = emittedCount > 0 || !!noteState.emitSummaryCounted;
+          const emittedButNeverPlayCalled = emitted && !started && playCallCount === 0 ? 1 : 0;
+          const playCalledButNeverStarted = playCallCount > 0 && !started ? 1 : 0;
+          const skippedBeforePlayCall = (!started && Number(noteState.skippedBeforePlayCallCount || 0) > 0) ? 1 : 0;
+          const terminalReason = __deriveSongPlaybackTerminalReason(noteState);
+          noteState.terminalReason = terminalReason;
           if (started) primaryStartedEventCount += 1;
           if (started && noteState.secondaryDropAfterPrimarySeen) secondaryDropAfterPrimaryCount += 1;
           if (emitted && !started) emittedButNeverStartedCount += 1;
+          if (emittedButNeverPlayCalled) emittedButNeverPlayCalledCount += 1;
+          if (playCalledButNeverStarted) playCalledButNeverStartedCount += 1;
+          if (skippedBeforePlayCall > 0) skippedBeforePlayCallCount += 1;
+          if (terminalReason) terminalReasonCounts[terminalReason] = Number(terminalReasonCounts[terminalReason] || 0) + 1;
+          songEventStats[eventKey] = {
+            songEventId: eventKey,
+            emittedCount,
+            playCallCount,
+            primaryStartedEventCount: started ? 1 : 0,
+            emittedButNeverPlayCalledCount: emittedButNeverPlayCalled,
+            playCalledButNeverStartedCount: playCalledButNeverStarted,
+            skippedBeforePlayCallCount: skippedBeforePlayCall,
+            terminalReason,
+            routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
+          };
+          if (!started && missingStartsSample.length < 20){
+            missingStartsSample.push({
+              songEventId: eventKey,
+              note: String(noteState.note || ""),
+              plannedTimeSec: Number.isFinite(Number(noteState.plannedTimeSec)) ? Number(Number(noteState.plannedTimeSec).toFixed(6)) : null,
+              terminalReason,
+              routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
+            });
+          }
         });
       }
       const summary = Object.assign({
@@ -5081,6 +5155,11 @@ return trSources[0]?.id || sources[0].id;
         primaryStartedEventCount,
         secondaryDropAfterPrimaryCount,
         emittedButNeverStartedCount,
+        emittedButNeverPlayCalledCount,
+        playCalledButNeverStartedCount,
+        skippedBeforePlayCallCount,
+        terminalReasonCounts,
+        songEventStats,
         startRate: Number((Math.min(1, ((Number(state.counts.emit) || 0) > 0 ? (Number(state.counts.start || 0) / Number(state.counts.emit || 0)) : 0))).toFixed(4))
       }, extra || {});
       const delaySummary = __computeSongDelayStats(state.noteDelays);
@@ -5110,6 +5189,9 @@ return trSources[0]?.id || sources[0].id;
         sampleSongEventIds: summary.sampleSongEventIds
       });
       console.log("[song route summary]", routeSummary);
+      if (missingStartsSample.length){
+        console.log("[song missing starts sample]", missingStartsSample);
+      }
       if (worstDelays.length){
         console.log("[song worst delays]", worstDelays);
       }
@@ -5161,17 +5243,35 @@ return trSources[0]?.id || sources[0].id;
         payload.emitDuplicate = emitKeyCount > 1;
         payload.priorStarted = !!(noteState && Number(noteState.startedCount || 0) > 0);
       }
+      if (noteState){
+        if (payload.note != null && payload.note !== "") noteState.note = String(payload.note);
+        if (Number.isFinite(Number(payload.plannedTimeSec))) noteState.plannedTimeSec = Number(payload.plannedTimeSec);
+        if (payload.route) noteState.routeCandidate = String(payload.route);
+      }
       if (key === "emit" && noteState){
         const summaryCounted = !noteState.emitSummaryCounted;
         payload.summaryCounted = summaryCounted;
+        noteState.emittedCount = Number(noteState.emittedCount || 0) + 1;
         if (summaryCounted) noteState.emitSummaryCounted = true;
+      }else if (key === "playCall" && noteState){
+        noteState.playCallCount = Number(noteState.playCallCount || 0) + 1;
+        if (!noteState.routeCandidate) noteState.routeCandidate = "sample";
+      }else if (key === "skip" && noteState){
+        noteState.skipCount = Number(noteState.skipCount || 0) + 1;
+        if (Number(noteState.playCallCount || 0) === 0 && Number(noteState.startedCount || 0) === 0){
+          noteState.skippedBeforePlayCallCount = Number(noteState.skippedBeforePlayCallCount || 0) + 1;
+        }
+        const normalizedSkipReason = __normalizeSongTerminalReason(payload.reason);
+        if (normalizedSkipReason === "token-stopped-before-start") noteState.tokenStoppedBeforeStartSeen = true;
+        else if (normalizedSkipReason === "filtered-nonplayable") noteState.filteredNonplayableSeen = true;
       }else if (key === "start" && noteState){
         const summaryCounted = !noteState.startSummaryCounted;
         payload.summaryCounted = summaryCounted;
         payload.primaryStart = summaryCounted;
+        noteState.startedCount = Number(noteState.startedCount || 0) + 1;
+        noteState.terminalReason = "primary-started";
         if (summaryCounted){
           noteState.startSummaryCounted = true;
-          noteState.startedCount = 1;
         }
         noteState.lastStartRoute = String(payload.route || "");
         noteState.lastStartPerfNow = Number.isFinite(Number(payload.actualStartPerfNow)) ? Number(payload.actualStartPerfNow) : performance.now();
@@ -5196,6 +5296,11 @@ return trSources[0]?.id || sources[0].id;
         payload.countSecondaryInSummary = countSecondaryInSummary;
         payload.summaryCounted = summaryCounted;
         noteState.dropCount = Number(noteState.dropCount || 0) + 1;
+        const normalizedDropReason = __normalizeSongTerminalReason(branchReason || resolvedReason);
+        if (normalizedDropReason === "preload-not-ready") noteState.preloadNotReadySeen = true;
+        else if (normalizedDropReason === "token-stopped-before-start") noteState.tokenStoppedBeforeStartSeen = true;
+        else if (normalizedDropReason === "filtered-nonplayable") noteState.filteredNonplayableSeen = true;
+        else if (normalizedDropReason === "playcall-no-start") noteState.playCallNoStartSeen = true;
         if (secondaryDropAfterPrimary) noteState.secondaryDropAfterPrimarySeen = true;
         if (separateDrop) noteState.secondaryDropCount = Number(noteState.secondaryDropCount || 0) + 1;
         else noteState.fatalDropCount = Number(noteState.fatalDropCount || 0) + 1;
