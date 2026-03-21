@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-015"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-016"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1623,14 +1623,20 @@ async function playSample(note, octave, durMs, opts={}){
     try{ console.log("[live sample] question play", { note, octave: reqOct, full, fn: "__playPianoSample" }); }catch(e){}
     const callPerf = performance.now();
     const via = opts.sourceType === "song" ? "song" : (opts.sourceType === "live" ? "live" : "question");
+    const matchLiveInputSample = !!opts.matchLiveInputSample;
+    if (matchLiveInputSample){
+      try{ await window.__preloadPianoBuffer(full); }catch(_){}
+    }
+    const autoStopFadeMs = matchLiveInputSample ? 6 : 10;
     const sampleMeta = {
       via,
       callPerf,
       sourceType: opts.sourceType,
+      matchLiveInputSample,
       token: opts.token,
       note: full,
       durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
-      autoStopFadeMs: Number.isFinite(Number(durMs)) ? 10 : null
+      autoStopFadeMs: Number.isFinite(Number(durMs)) ? autoStopFadeMs : null
     };
     const h = window.__playPianoSample(full, sampleMeta);
     if (h){
@@ -1644,12 +1650,12 @@ async function playSample(note, octave, durMs, opts={}){
       setTimeout(()=>{
         try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("stop-request", full, sampleMeta, {
           route: h && h.__liveRoute || null,
-          releaseMs: 10,
+          releaseMs: autoStopFadeMs,
           scheduledDurMs: ms,
           stopReason: "timer-stop",
-          autoStopFadeMs: 10
+          autoStopFadeMs
         }); }catch(e){}
-        try{ __stopPianoSampleHandle(h, 10, { caller:"playSample:auto-stop", via:sampleMeta.via, note:full, sourceType:sampleMeta.sourceType }); }catch(e){}
+        try{ __stopPianoSampleHandle(h, autoStopFadeMs, { caller:"playSample:auto-stop", via:sampleMeta.via, note:full, sourceType:sampleMeta.sourceType, matchLiveInputSample }); }catch(e){}
         try{ window.__activePianoSampleHandles && window.__activePianoSampleHandles.delete(h); }catch(e){}
       }, ms);
     }
@@ -2829,8 +2835,14 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     return noteKey(noteName, oct).replace(/#/g,"s");
   }
 
+  function __shouldMatchLiveInputSampleProfile(meta){
+    if (__safeIsLiveInputSampleMeta(meta)) return true;
+    return !!(meta && meta.matchLiveInputSample);
+  }
+  window.__shouldMatchLiveInputSampleProfile = __shouldMatchLiveInputSampleProfile;
+
   function __getLiveInputSampleGainMultiplier(note, meta){
-    if (!__safeIsLiveInputSampleMeta(meta)) return 1.0;
+    if (!__shouldMatchLiveInputSampleProfile(meta)) return 1.0;
     const key = String(note || "").trim();
     if (!key) return 1.0;
     const m = /^([A-G](?:s|#)?)(\d+)$/.exec(key);
@@ -4743,7 +4755,7 @@ function __registerTrackAsSong(sourceId){
         const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
         if (runId !== __getPreviewRunId()) break;
-        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken }); // note length (sound)
+        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, matchLiveInputSample:true }); // note length (sound)
         if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         const stillActive = await __songPlaybackSleep(runId, gapMs); // spacing (rhythm)
@@ -4808,7 +4820,7 @@ async function __playAllFromTrack(runId, songToken){
         const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
         if (runId !== __getPreviewRunId()) break;
-        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken });
+        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, matchLiveInputSample:true });
         if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         const stillActive = await __songPlaybackSleep(runId, gapMs);
@@ -5205,10 +5217,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const g = ctx.createGain();
       const nowCtx = ctx.currentTime;
       const startAt = nowCtx;
-      const isLive = !meta || meta.via === "pointer" || meta.via === "keyboard" || meta.via === "live";
-      const trimMs = isLive ? 3 : 0;
+      const matchLiveProfile = __shouldMatchLiveInputSampleProfile(meta);
+      const trimMs = matchLiveProfile ? 3 : 0;
       const trimSec = Math.max(0, Math.min(buf.duration - 0.001, trimMs / 1000));
-      const attackMs = isLive ? 1.8 : 2.0;
+      const attackMs = matchLiveProfile ? 1.8 : 2.0;
       const attackEndAt = startAt + (attackMs / 1000);
       const eventPerf = Number(meta && meta.eventPerf);
       const callPerf = Number(meta && meta.callPerf);
