@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-013"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-014"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2764,22 +2764,30 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     const key = String(note || "").trim();
     if (!key) return 1.0;
     const m = /^([A-G](?:s|#)?)(\d+)$/.exec(key);
-    const pitch = m ? m[1].replace(/#/g, "s") : "";
     const octave = m ? parseInt(m[2], 10) : NaN;
     if (!Number.isFinite(octave)) return 1.0;
 
-    let gain = 1.0;
-    if (octave <= 3) gain = 0.64;
-    else if (octave === 4) gain = 0.70;
-    else if (octave === 5) gain = 0.72;
+    const targetPostPeak = 0.56;
+    const fallbackGainByOctave = {
+      3: 0.64,
+      4: 0.60,
+      5: 0.58
+    };
+    const fallbackGain = Object.prototype.hasOwnProperty.call(fallbackGainByOctave, octave)
+      ? fallbackGainByOctave[octave]
+      : (octave <= 3 ? 0.64 : (octave >= 5 ? 0.58 : 0.60));
 
-    if (octave === 3 && ["F","Fs","B"].includes(pitch)) return 0.68;
-    if (octave === 4 && pitch === "C") return 0.70;
-    if (octave === 4 && ["Cs","D","Ds"].includes(pitch)) return 0.61;
-    if (octave === 4 && ["E","F","Fs","G","Gs","A","As","B"].includes(pitch)) return 0.58;
-    if (octave === 5 && pitch === "C") return 0.72;
-    if (octave === 5 && ["Cs","D","Ds","E","F","Fs","G","Gs","A","As","B"].includes(pitch)) return 0.60;
-    return gain;
+    let sourcePeak = null;
+    try{
+      sourcePeak = Number(window.__getLiveInputSamplePeakValue && window.__getLiveInputSamplePeakValue(key));
+    }catch(_){ }
+
+    if (Number.isFinite(sourcePeak) && sourcePeak > 0){
+      const resolved = targetPostPeak / sourcePeak;
+      return Math.max(0.45, Math.min(1.0, resolved));
+    }
+
+    return fallbackGain;
   }
   window.__getLiveInputSampleGainMultiplier = __getLiveInputSampleGainMultiplier;
 
