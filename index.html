@@ -479,7 +479,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-005"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-006"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2581,6 +2581,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (!__safeIsLiveInputSampleMeta(meta)) return 1.0;
     const key = String(note || "").trim();
     if (!key) return 1.0;
+    if (key === "C4") return 0.70;
+    if (key === "C5") return 0.78;
     const m = /^([A-G](?:s|#)?)(\d+)$/.exec(key);
     const octave = m ? parseInt(m[2], 10) : NaN;
     if (!Number.isFinite(octave)) return 1.0;
