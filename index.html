@@ -727,6 +727,60 @@ window.__captureLiveInputDebugMeter = window.__captureLiveInputDebugMeter || fun
   }catch(_e){}
   return null;
 };
+
+window.__getSamplePlaybackCompareContext = window.__getSamplePlaybackCompareContext || function(meta){
+  const via = meta && meta.via;
+  const sourceType = meta && meta.sourceType;
+  if (sourceType === "song" || via === "song") return "song";
+  if (__safeIsLiveInputSampleMeta(meta)) return "live";
+  return "question";
+};
+window.__logSamplePlaybackCompare = window.__logSamplePlaybackCompare || function(phase, note, meta, extra){
+  try{
+    const info = extra || {};
+    const key = String(note || (meta && meta.note) || "").trim();
+    const activeMap = window.__activeNoteVoices;
+    const activeSameNoteVoices = key && activeMap && typeof activeMap.get === "function"
+      ? (((activeMap.get(key) || []).length) || 0)
+      : 0;
+    const heldSamples = window.__heldSamples;
+    const pendingHeldSamples = window.__pendingHeldSamples;
+    const payload = {
+      phase: String(phase || "unknown"),
+      context: window.__getSamplePlaybackCompareContext(meta),
+      note: key || null,
+      via: meta && meta.via || null,
+      sourceType: meta && meta.sourceType || null,
+      route: info.route || (info.handle && info.handle.__liveRoute) || null,
+      gainMultiplier: Number.isFinite(Number(info.gainMultiplier)) ? Number(info.gainMultiplier) : null,
+      trimMs: Number.isFinite(Number(info.trimMs)) ? Number(info.trimMs) : null,
+      attackMs: Number.isFinite(Number(info.attackMs)) ? Number(info.attackMs) : null,
+      releaseMs: Number.isFinite(Number(info.releaseMs)) ? Number(info.releaseMs) : null,
+      scheduledDurMs: Number.isFinite(Number(info.scheduledDurMs)) ? Number(info.scheduledDurMs) : null,
+      stopReason: info.stopReason || null,
+      stopWaitMs: Number.isFinite(Number(info.stopWaitMs)) ? Number(info.stopWaitMs) : null,
+      activeSameNoteVoices,
+      activePianoSampleHandles: window.__activePianoSampleHandles && typeof window.__activePianoSampleHandles.size === "number"
+        ? window.__activePianoSampleHandles.size
+        : null,
+      heldSampleActive: !!(key && heldSamples && typeof heldSamples.has === "function" && heldSamples.has(key)),
+      pendingSampleActive: !!(key && pendingHeldSamples && typeof pendingHeldSamples.has === "function" && pendingHeldSamples.has(key))
+    };
+    if (Object.prototype.hasOwnProperty.call(info, "samplePeak")){
+      payload.samplePeak = Number.isFinite(Number(info.samplePeak)) ? Number(info.samplePeak) : null;
+    }
+    if (info.reason) payload.reason = String(info.reason);
+    if (info.autoStopFadeMs != null){
+      payload.autoStopFadeMs = Number.isFinite(Number(info.autoStopFadeMs)) ? Number(info.autoStopFadeMs) : null;
+    }
+    if (info.htmlVolume != null){
+      payload.htmlVolume = Number.isFinite(Number(info.htmlVolume)) ? Number(info.htmlVolume) : null;
+    }
+    console.log(`[sample compare ${payload.phase}]`, payload);
+    return payload;
+  }catch(_e){}
+  return null;
+};
 try{ window.__applyBuildVersionBadge(); }catch(_e){}
 document.addEventListener("DOMContentLoaded", () => {
   try{ window.__applyBuildVersionBadge && window.__applyBuildVersionBadge(); }catch(_e){}
@@ -1569,7 +1623,16 @@ async function playSample(note, octave, durMs, opts={}){
     try{ console.log("[live sample] question play", { note, octave: reqOct, full, fn: "__playPianoSample" }); }catch(e){}
     const callPerf = performance.now();
     const via = opts.sourceType === "song" ? "song" : (opts.sourceType === "live" ? "live" : "question");
-    const h = window.__playPianoSample(full, { via, callPerf, sourceType: opts.sourceType, token: opts.token, note: full });
+    const sampleMeta = {
+      via,
+      callPerf,
+      sourceType: opts.sourceType,
+      token: opts.token,
+      note: full,
+      durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
+      autoStopFadeMs: Number.isFinite(Number(durMs)) ? 10 : null
+    };
+    const h = window.__playPianoSample(full, sampleMeta);
     if (h){
       try{
         window.__activePianoSampleHandles = window.__activePianoSampleHandles || new Set();
@@ -1579,7 +1642,14 @@ async function playSample(note, octave, durMs, opts={}){
     if (h && Number.isFinite(durMs)){
       const ms = Math.max(20, durMs|0);
       setTimeout(()=>{
-        try{ __stopPianoSampleHandle(h, 10); }catch(e){}
+        try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("stop-request", full, sampleMeta, {
+          route: h && h.__liveRoute || null,
+          releaseMs: 10,
+          scheduledDurMs: ms,
+          stopReason: "timer-stop",
+          autoStopFadeMs: 10
+        }); }catch(e){}
+        try{ __stopPianoSampleHandle(h, 10, { caller:"playSample:auto-stop", via:sampleMeta.via, note:full, sourceType:sampleMeta.sourceType }); }catch(e){}
         try{ window.__activePianoSampleHandles && window.__activePianoSampleHandles.delete(h); }catch(e){}
       }, ms);
     }
@@ -3186,6 +3256,10 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     const heldHandle = window.__heldSamples && window.__heldSamples.get(sample);
     const pendingHandleExisting = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
     if (heldHandle && !(heldHandle && heldHandle.__pendingStart)){
+      try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("start-skip", sample, Object.assign({ sourceType:"live" }, meta), {
+        route: heldHandle && heldHandle.__liveRoute || null,
+        reason: "already-held-real-handle"
+      }); }catch(_){ }
       __logLiveInputSample("start early return (already held real handle)", { sample, via: meta && meta.via, note: meta && meta.note, handleType: heldHandle && heldHandle.type, route: heldHandle && heldHandle.__liveRoute });
       return heldHandle;
     }
@@ -3364,6 +3438,12 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       note: h.__note,
       waitMs: Math.round(waitMs)
     });
+    try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("stop-request", sample, Object.assign({ sourceType:"live" }, meta, { via: (meta && meta.via) || h.__via, note: h.__note }), {
+      route: stopRoute,
+      releaseMs: fadeMs,
+      stopReason: "held-release",
+      stopWaitMs: Math.round(waitMs)
+    }); }catch(_){ }
     __logLiveInputSample("stop request", {
       sample,
       via: (meta && meta.via) || h.__via,
@@ -4933,6 +5013,16 @@ useBtn.addEventListener("click", () => {
       const appliedGain = __setLiveHtmlAudioGain(a, liveGain);
       if (handle && handle.audio) __setLiveHtmlAudioGain(handle.audio, liveGain);
       if (handle && typeof handle === "object") handle.__gainMultiplier = appliedGain;
+      try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("start", note, meta, {
+        route: "sample / html audio",
+        gainMultiplier: appliedGain,
+        trimMs: null,
+        attackMs: null,
+        scheduledDurMs: meta && meta.durMs,
+        autoStopFadeMs: meta && meta.autoStopFadeMs,
+        htmlVolume: appliedGain,
+        samplePeak: window.__getLiveInputSamplePeakValue && window.__getLiveInputSamplePeakValue(note)
+      }); }catch(_){ }
       try{ window.__captureLiveInputDebugMeter && window.__captureLiveInputDebugMeter(note, meta, { route:"sample / html audio", gainMultiplier: appliedGain, handle }); }catch(_){ }
       try{
         const p = a.play();
@@ -5126,6 +5216,15 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const startLeadMs = (startAt - nowCtx) * 1000;
       const audibleMs = (Number.isFinite(eventPerf) ? (callPerfNow - eventPerf) : 0) + Math.max(0, startLeadMs) + attackMs;
       const liveGain = __resolveLiveInputSampleGainMultiplier(note, meta);
+      try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("start", note, meta, {
+        route: "sample / webaudio",
+        gainMultiplier: liveGain,
+        trimMs,
+        attackMs,
+        scheduledDurMs: meta && meta.durMs,
+        autoStopFadeMs: meta && meta.autoStopFadeMs,
+        samplePeak: window.__getLiveInputSamplePeakValue && window.__getLiveInputSamplePeakValue(note)
+      }); }catch(_){ }
       if (attackMs <= 0){
         g.gain.setValueAtTime(liveGain, startAt);
       }else{
