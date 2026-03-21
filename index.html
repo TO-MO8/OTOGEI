@@ -2648,6 +2648,18 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       }
     }catch(_){}
     if (!h || typeof h !== "object") return h;
+    try{
+      if (!h.type && typeof h.pause === "function"){
+        h = {
+          type: "html",
+          audio: h,
+          note: (meta && meta.note) || h.note || null,
+          __note: (meta && meta.note) || h.__note || h.note || null,
+          __via: (meta && meta.via) || h.__via || null,
+          __liveRoute: "sample / html audio"
+        };
+      }
+    }catch(_){}
     if (!h.type){
       if (h.audio && typeof h.audio.pause === "function") h.type = "html";
       else if (h.src && h.gain) h.type = "buffer";
@@ -4550,6 +4562,24 @@ useBtn.addEventListener("click", () => {
 
     const handle = window.__normalizeLiveSampleHandle({ type:"html", audio:a, note, __liveRoute:"sample / html audio" }, meta);
     try{
+      if (handle && typeof handle === "object"){
+        handle.pause = function(){ return a.pause(); };
+        handle.play = function(){ return a.play(); };
+        handle.stop = function(){
+          try{ a.pause(); }catch(_){ }
+          try{ a.currentTime = 0; }catch(_){ }
+        };
+        if (!Object.getOwnPropertyDescriptor(handle, "currentTime")){
+          Object.defineProperty(handle, "currentTime", {
+            configurable: true,
+            enumerable: false,
+            get(){ return a.currentTime; },
+            set(v){ a.currentTime = v; }
+          });
+        }
+      }
+    }catch(_){}
+    try{
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)) return null;
       try{ a.pause(); }catch(_){ }
       try{ a.currentTime = 0; }catch(_){ }
@@ -4872,7 +4902,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
           let resolved = null;
           if (buf) resolved = __playBufferNow(note, meta);
           if (!resolved) resolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
-          if (!resolved) return null;
+          resolved = window.__normalizeLiveSampleHandle(resolved, meta);
+          if (!resolved || resolved.type === "pending") return null;
           return __adoptLiveSampleHandle(pending, resolved, meta);
         })
         .then(handle => {
