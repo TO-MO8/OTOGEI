@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-022"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-023"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1711,6 +1711,8 @@ async function playSample(note, octave, durMs, opts={}){
       sourceType: opts.sourceType,
       matchLiveInputSample,
       token: opts.token,
+      songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+      songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
       note: full,
       durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
       autoStopFadeMs: Number.isFinite(Number(durMs)) ? autoStopFadeMs : null,
@@ -1722,7 +1724,9 @@ async function playSample(note, octave, durMs, opts={}){
       note: full,
       durMs: sampleMeta.durMs,
       autoStopFadeMs,
-      matchLiveInputSample
+      matchLiveInputSample,
+      songEventId: sampleMeta.songEventId,
+      songNoteIndex: sampleMeta.songNoteIndex
     }); }catch(_){}
     const h = window.__playPianoSample(full, sampleMeta);
     try{
@@ -1731,7 +1735,9 @@ async function playSample(note, octave, durMs, opts={}){
           note: full,
           reason: h ? "play-handle-created" : "play-returned-null",
           handleType: h && (h.type || typeof h) || null,
-          route: h && h.__liveRoute || null
+          route: h && h.__liveRoute || null,
+          songEventId: sampleMeta.songEventId,
+          songNoteIndex: sampleMeta.songNoteIndex
         });
       }
     }catch(_){}
@@ -2373,7 +2379,9 @@ async function playNoteOut(note, durMs, opts={}){
         note: emitNote,
         durMs: Number.isFinite(Number(durMs)) ? Number(durMs) : null,
         matchLiveInputSample: !!opts.matchLiveInputSample,
-        plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null
+        plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+        songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null
       }); }catch(_){}
     }
     if (!__allowAudioEmit(emitNote, opts)){
@@ -2392,6 +2400,8 @@ async function playNoteOut(note, durMs, opts={}){
           note: emitNote,
           route: "gmpiano",
           plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+          songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+          songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
           actualStartPerfNow: performance.now(),
           actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
         }); }catch(_e){}
@@ -2407,6 +2417,8 @@ async function playNoteOut(note, durMs, opts={}){
         note: emitNote,
         route: "synth",
         plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+        songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
         actualStartPerfNow: performance.now(),
         actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
       }); }catch(_e){}
@@ -2436,6 +2448,8 @@ async function playNoteOut(note, durMs, opts={}){
         note: emitNote,
         route: "sample-fallback",
         plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+        songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
         actualStartPerfNow: performance.now(),
         actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
       }); }catch(_e){}
@@ -2451,6 +2465,8 @@ async function playNoteOut(note, durMs, opts={}){
         note: emitNote,
         route: "beep",
         plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+        songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
         actualStartPerfNow: performance.now(),
         actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
       }); }catch(_e){}
@@ -2468,6 +2484,8 @@ async function playNoteOut(note, durMs, opts={}){
       note: emitNote,
       route: "default-fallback",
       plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+      songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+      songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
       actualStartPerfNow: performance.now(),
       actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null
     }); }catch(_e){}
@@ -4684,6 +4702,8 @@ return trSources[0]?.id || sources[0].id;
     emitKeyCounts: Object.create(null),
     allowKeyCounts: Object.create(null),
     noteStates: Object.create(null),
+    songEventIds: Object.create(null),
+    songEventIdOrder: [],
     lastPlayPianoSampleEnter: null
   };
   window.__songLengthDebugState = window.__songLengthDebugState || {
@@ -4823,6 +4843,8 @@ return trSources[0]?.id || sources[0].id;
       emitKeyCounts: Object.create(null),
       allowKeyCounts: Object.create(null),
       noteStates: Object.create(null),
+      songEventIds: Object.create(null),
+      songEventIdOrder: [],
       lastPlayPianoSampleEnter: null
     };
     window.__songPlaybackDebugState = next;
@@ -4996,11 +5018,18 @@ return trSources[0]?.id || sources[0].id;
             : null
         };
       });
+      const uniqueSongEventIds = Array.isArray(state.songEventIdOrder) ? state.songEventIdOrder.slice() : [];
+      summary.uniqueSongEventIdCount = uniqueSongEventIds.length;
+      summary.sampleSongEventIds = uniqueSongEventIds.slice(0, 10);
       const worstDelays = (Array.isArray(state.noteDelays) ? state.noteDelays.slice() : [])
         .sort((a,b)=>Math.abs(Number(b && b.delayMs || 0)) - Math.abs(Number(a && a.delayMs || 0)))
         .slice(0, 20);
       console.log("[song length compare]", summary);
       console.log("[song timing summary]", summary);
+      console.log("[song timing ids]", {
+        uniqueSongEventIdCount: summary.uniqueSongEventIdCount,
+        sampleSongEventIds: summary.sampleSongEventIds
+      });
       console.log("[song route summary]", routeSummary);
       if (worstDelays.length){
         console.log("[song worst delays]", worstDelays);
@@ -5036,7 +5065,15 @@ return trSources[0]?.id || sources[0].id;
         sinceResetMs: Number((performance.now() - (state.startedAt || performance.now())).toFixed(3)),
         counts: Object.assign({}, state.counts)
       }, detail || {});
-      if (eventKey) payload.songEventId = eventKey;
+      if (eventKey){
+        payload.songEventId = eventKey;
+        if (!state.songEventIds) state.songEventIds = Object.create(null);
+        if (!state.songEventIdOrder) state.songEventIdOrder = [];
+        if (!state.songEventIds[eventKey]){
+          state.songEventIds[eventKey] = true;
+          state.songEventIdOrder.push(eventKey);
+        }
+      }
       if (emitKey){
         payload.emitKey = emitKey;
         payload.emitKeyCount = emitKeyCount;
@@ -5339,8 +5376,9 @@ function __registerTrackAsSong(sourceId){
       const tempoMap = __getGlobalTempoEvents(__parsed);
       const t0 = performance.now();
       for (let i=0;i<notes.length;i++){
+        const songNoteIndex = i;
         if (runId !== __getPreviewRunId()) return;
-        const nn = notes[i];
+        const nn = notes[songNoteIndex];
         if (runId !== __getPreviewRunId()) break;
         const gapTick = Number.isFinite(nn.__dtTick) ? nn.__dtTick : Math.floor((__parsed.ticksPerBeat||480)/2);
         const durTick = Number.isFinite(nn.__durTick) ? nn.__durTick : Math.max(1, Math.floor(gapTick*0.8));
@@ -5419,8 +5457,9 @@ async function __playAllFromTrack(runId, songToken){
         songStartAudioTime: Number.isFinite(songStartAudioTime) ? Number(songStartAudioTime.toFixed(6)) : null
       }); }catch(_e){}
       for (let i=0;i<notes.length;i++){
+        const songNoteIndex = i;
         if (runId !== __getPreviewRunId()) break;
-        const nn = notes[i];
+        const nn = notes[songNoteIndex];
         const gapTick = Number.isFinite(nn.__dtTick) ? nn.__dtTick : Math.floor((__parsed.ticksPerBeat||480)/2);
         const durTick = Number.isFinite(nn.__durTick) ? nn.__durTick : Math.max(1, Math.floor(gapTick*0.8));
         const plannedTimeSec = __getSongLengthDebugNoteTimeSec(nn, tempoMap);
@@ -5438,8 +5477,8 @@ async function __playAllFromTrack(runId, songToken){
         await window.playNoteOut(playNote, dur, {
           sourceType:"song",
           token:songToken,
-          songEventId: `${runId}:${songToken}:${sourceId}:${i}`,
-          songNoteIndex: i,
+          songEventId: `${runId}:${songToken}:${sourceId}:${songNoteIndex}`,
+          songNoteIndex,
           matchLiveInputSample:true,
           plannedTimeSec,
           songStartAudioTime,
@@ -5646,7 +5685,9 @@ useBtn.addEventListener("click", () => {
         try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
           note,
           reason: "allow-audio-emit-blocked-html",
-          route: "sample / html audio"
+          route: "sample / html audio",
+          songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+          songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
         }); }catch(_){}
         return null;
       }
@@ -5676,6 +5717,8 @@ useBtn.addEventListener("click", () => {
         note,
         route: "sample / html audio",
         plannedTimeSec: Number.isFinite(Number(meta && meta.plannedTimeSec)) ? Number(meta.plannedTimeSec) : null,
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
         actualStartPerfNow: performance.now(),
         actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null,
         activeSameNoteVoices: (window.__activeNoteVoices && window.__activeNoteVoices.get(note) && window.__activeNoteVoices.get(note).length) || 0
@@ -5688,6 +5731,8 @@ useBtn.addEventListener("click", () => {
         note,
         reason: "html-play-exception",
         route: "sample / html audio",
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
         error: e && e.message ? e.message : String(e)
       }); }catch(_){}
       return handle;
@@ -5853,7 +5898,9 @@ window.addEventListener("DOMContentLoaded", ()=>{
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
         reason: "allow-audio-emit-blocked",
-        route: "sample / webaudio"
+        route: "sample / webaudio",
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
       }); }catch(_){}
       return null;
     }
@@ -5864,7 +5911,9 @@ window.addEventListener("DOMContentLoaded", ()=>{
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
         reason: "buffer-missing-at-start",
-        route: "sample / webaudio"
+        route: "sample / webaudio",
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
       }); }catch(_){}
       return null;
     }
@@ -5911,6 +5960,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
         route: "sample / webaudio",
         trimMs,
         attackMs,
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
         plannedTimeSec: Number.isFinite(Number(meta && meta.plannedTimeSec)) ? Number(meta.plannedTimeSec) : null,
         actualStartPerfNow: performance.now() + Math.max(0, startLeadMs),
         actualStartAudioTime: startAt,
@@ -5963,6 +6014,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
         note,
         reason: "buffer-start-exception",
         route: "sample / webaudio",
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
         error: e && e.message ? e.message : String(e)
       }); }catch(_){}
       return null;
