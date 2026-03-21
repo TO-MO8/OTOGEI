@@ -479,7 +479,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-004"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-005"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2805,17 +2805,17 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
 
   function __resolveLiveSampleHandle(handle, sample, meta){
     const direct = __normalizeLiveSampleHandle(handle, meta);
-    if (direct && (direct.type === "buffer" || direct.type === "webaudio")) return direct;
     if (direct && direct.__resolvedHandle){
       const resolved = __normalizeLiveSampleHandle(direct.__resolvedHandle, meta);
-      if (resolved) return resolved;
+      if (resolved && resolved.type !== "pending") return resolved;
     }
+    if (direct && direct.type && direct.type !== "pending") return direct;
     try{
       const map = window.__activeNoteVoices;
       const arr = map && sample && map.get(sample);
       const latest = arr && arr.length ? arr[arr.length - 1] : null;
       const fromVoice = __normalizeLiveSampleHandle(latest, meta);
-      if (fromVoice && (fromVoice.type === "buffer" || fromVoice.type === "webaudio")) return fromVoice;
+      if (fromVoice && fromVoice.type && fromVoice.type !== "pending") return fromVoice;
     }catch(_){}
     return direct;
   }
@@ -3053,12 +3053,13 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         __logLiveInputSample("before __readyPromise await", { sample, via: playMeta.via, note: playMeta.note, pendingStopRequested: !!pendingHandle.__pendingStopRequested });
         readyPromise
           .then(resolved => {
-            const resolvedInfo = __describeLiveSampleResolvedObject(resolved);
+            const resolvedHandle = __resolveLiveSampleHandle(resolved || pendingHandle, sample, playMeta) || __resolveLiveSampleHandle(pendingHandle, sample, playMeta);
+            const resolvedInfo = __describeLiveSampleResolvedObject(resolvedHandle || resolved);
             __logLiveInputSample("after __readyPromise resolve", {
               sample,
               via: playMeta.via,
               note: playMeta.note,
-              resolvedType: resolved && resolved.type || typeof resolved,
+              resolvedType: resolvedHandle && resolvedHandle.type || resolved && resolved.type || typeof resolved,
               pendingStopRequested: !!pendingHandle.__pendingStopRequested,
               constructorName: resolvedInfo.constructorName,
               keys: resolvedInfo.keys,
@@ -3080,13 +3081,13 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
             const currentPending = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
             if (!currentPending || currentPending !== pendingHandle){
               __logLiveInputSample("start early return (pending replaced before resolve)", { sample, via: playMeta.via, note: playMeta.note });
-              return resolved;
+              return resolvedHandle || resolved;
             }
-            const finalized = __finalizeHeldSampleStart(sample, pendingHandle, resolved, playMeta);
+            const finalized = __finalizeHeldSampleStart(sample, pendingHandle, resolvedHandle || resolved || pendingHandle, playMeta);
             if (!finalized){
-              const normalizedResolved = __normalizeLiveSampleHandle(resolved, playMeta);
+              const normalizedResolved = __normalizeLiveSampleHandle(resolvedHandle || resolved, playMeta);
               let noHandleReason = "unknown";
-              if (!resolved) noHandleReason = "resolved-nullish";
+              if (!(resolvedHandle || resolved)) noHandleReason = "resolved-nullish";
               else if (!normalizedResolved) noHandleReason = "normalized-nullish";
               else if (normalizedResolved.type === "pending") noHandleReason = "normalized-pending";
               else if (!normalizedResolved.type) noHandleReason = "normalized-missing-type";
@@ -3096,7 +3097,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
               __logLiveStartRoute("sample / no-handle", { via: meta && meta.via, note: meta && meta.note, sample, noHandleReason });
               __logLiveInputSample("start early return (resolved no handle)", { sample, via: meta && meta.via, note: meta && meta.note, noHandleReason });
             }
-            return finalized || resolved;
+            return finalized || resolvedHandle || resolved;
           })
           .catch(err => {
             __logLiveInputSample("start early return (__readyPromise rejected)", Object.assign({
@@ -5023,11 +5024,12 @@ window.addEventListener("DOMContentLoaded", ()=>{
           }
           resolved = window.__normalizeLiveSampleHandle(resolved, meta);
           if (!resolved || resolved.type === "pending") return null;
-          return __adoptLiveSampleHandle(pending, resolved, meta);
+          const adopted = __adoptLiveSampleHandle(pending, resolved, meta);
+          return __resolveLiveSampleHandle(adopted || pending, note, meta) || __resolveLiveSampleHandle(pending, note, meta);
         })
         .then(handle => {
           pending.__pendingStart = false;
-          const liveHandle = window.__normalizeLiveSampleHandle(handle, meta);
+          const liveHandle = __resolveLiveSampleHandle(handle || pending, note, meta) || __resolveLiveSampleHandle(pending, note, meta);
           return (liveHandle && liveHandle.type !== "pending") ? liveHandle : null;
         })
         .catch(() => {
