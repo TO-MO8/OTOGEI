@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-026"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-027"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1664,7 +1664,22 @@ async function playSample(note, octave, durMs, opts={}){
   const full = (n.replace(/#/g,"s")) + String(reqOct);
 
   const allowed = window.__PIANO_ALLOWED__;
-  if (allowed && !allowed.has(full)) return true; // silent if not available
+  const isSongPlaybackRequest = opts && opts.sourceType === "song";
+  if (allowed && !allowed.has(full)){
+    const normalized = String(full || "").replace(/#/g, "s");
+    const octaveMatch = /^([A-G](?:s)?)(-?\d+)$/.exec(normalized);
+    const octave = octaveMatch ? Number(octaveMatch[2]) : null;
+    const skipReason = (Number.isFinite(octave) && octave < 3) ? "low-note-filter" : "sample-allowlist-filter";
+    if (!isSongPlaybackRequest) return true; // question/live は従来どおり silent
+    try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
+      note: full,
+      reason: "song-allowlist-bypass",
+      skipReason,
+      plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+      songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+      songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null
+    }); }catch(_e){}
+  }
 
   if (typeof window.__playPianoSample === "function"){
     try{ console.log("[live sample] question play", { note, octave: reqOct, full, fn: "__playPianoSample" }); }catch(e){}
@@ -4785,7 +4800,10 @@ return trSources[0]?.id || sources[0].id;
         playCallNoStartSeen: false,
         terminalReason: "",
         lastStartRoute: "",
-        lastStartPerfNow: null
+        lastStartPerfNow: null,
+        skipReasonCounts: Object.create(null),
+        primarySkipReason: "",
+        lastSkipReason: ""
       };
     }
     return state.noteStates[eventKey];
@@ -4815,6 +4833,24 @@ return trSources[0]?.id || sources[0].id;
     if (raw === "playcall-no-start" || raw === "play-returned-null" || raw === "primary-start-failed") return "playcall-no-start";
     if (raw === "token-stopped-before-start" || raw === "token-stopped" || raw.startsWith("allow-audio-emit-blocked")) return "token-stopped-before-start";
     if (raw === "skipped-before-playcall") return raw;
+    return raw;
+  }
+  function __normalizeSongSkipReason(reason, detail){
+    const explicit = String(detail && detail.skipReason || "").trim();
+    if (explicit) return explicit;
+    const raw = String(reason || "").trim();
+    if (!raw) return "unknown-skip";
+    if (raw === "same-note-near-repeat" || raw === "density-limit" || raw === "low-note-filter" || raw === "allow-audio-emit-block" || raw === "duplicate-note-key" || raw === "token-mismatch") return raw;
+    if (raw.startsWith("allow-audio-emit-blocked")) return "token-mismatch";
+    if (raw === "sample-allowed-miss"){
+      const note = String(detail && detail.note || "");
+      const m = /^([A-G](?:#|s|b)?)(-?\d+)$/.exec(note);
+      if (m){
+        const octave = Number(m[2]);
+        if (Number.isFinite(octave) && octave < 3) return "low-note-filter";
+      }
+      return "sample-allowlist-filter";
+    }
     return raw;
   }
   function __deriveSongPlaybackTerminalReason(noteState){
@@ -5090,6 +5126,8 @@ return trSources[0]?.id || sources[0].id;
       let playCalledButNeverStartedCount = 0;
       let skippedBeforePlayCallCount = 0;
       const terminalReasonCounts = Object.create(null);
+      const skippedBeforePlayCallReasonCounts = Object.create(null);
+      const terminalReasonCountsBreakdown = Object.create(null);
       const songEventStats = Object.create(null);
       const missingStartsSample = [];
       const playbackSongEventIds = (playbackState && Array.isArray(playbackState.songEventIdOrder) && playbackState.songEventIdOrder.length)
@@ -5107,13 +5145,17 @@ return trSources[0]?.id || sources[0].id;
           const playCalledButNeverStarted = playCallCount > 0 && !started ? 1 : 0;
           const skippedBeforePlayCall = (!started && Number(noteState.skippedBeforePlayCallCount || 0) > 0) ? 1 : 0;
           const terminalReason = __deriveSongPlaybackTerminalReason(noteState);
+          const skipReason = String(noteState.lastSkipReason || noteState.primarySkipReason || "");
           noteState.terminalReason = terminalReason;
           if (started) primaryStartedEventCount += 1;
           if (started && noteState.secondaryDropAfterPrimarySeen) secondaryDropAfterPrimaryCount += 1;
           if (emitted && !started) emittedButNeverStartedCount += 1;
           if (emittedButNeverPlayCalled) emittedButNeverPlayCalledCount += 1;
           if (playCalledButNeverStarted) playCalledButNeverStartedCount += 1;
-          if (skippedBeforePlayCall > 0) skippedBeforePlayCallCount += 1;
+          if (skippedBeforePlayCall > 0){
+            skippedBeforePlayCallCount += 1;
+            if (skipReason) skippedBeforePlayCallReasonCounts[skipReason] = Number(skippedBeforePlayCallReasonCounts[skipReason] || 0) + 1;
+          }
           if (terminalReason) terminalReasonCounts[terminalReason] = Number(terminalReasonCounts[terminalReason] || 0) + 1;
           songEventStats[eventKey] = {
             songEventId: eventKey,
@@ -5123,6 +5165,8 @@ return trSources[0]?.id || sources[0].id;
             emittedButNeverPlayCalledCount: emittedButNeverPlayCalled,
             playCalledButNeverStartedCount: playCalledButNeverStarted,
             skippedBeforePlayCallCount: skippedBeforePlayCall,
+            skipReason,
+            skipReasonCounts: Object.assign({}, noteState.skipReasonCounts || {}),
             terminalReason,
             routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
           };
@@ -5132,11 +5176,25 @@ return trSources[0]?.id || sources[0].id;
               note: String(noteState.note || ""),
               plannedTimeSec: Number.isFinite(Number(noteState.plannedTimeSec)) ? Number(Number(noteState.plannedTimeSec).toFixed(6)) : null,
               terminalReason,
+              skipReason,
+              skipReasonCounts: Object.assign({}, noteState.skipReasonCounts || {}),
               routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
             });
           }
         });
       }
+      terminalReasonCountsBreakdown["primary-started"] = Number(terminalReasonCounts["primary-started"] || 0);
+      if (Object.prototype.hasOwnProperty.call(terminalReasonCounts, "skipped-before-playcall")){
+        terminalReasonCountsBreakdown["skipped-before-playcall"] = {
+          total: Number(terminalReasonCounts["skipped-before-playcall"] || 0),
+          skipReasonCounts: Object.assign({}, skippedBeforePlayCallReasonCounts)
+        };
+      }
+      Object.keys(terminalReasonCounts).forEach(key => {
+        if (!Object.prototype.hasOwnProperty.call(terminalReasonCountsBreakdown, key)){
+          terminalReasonCountsBreakdown[key] = Number(terminalReasonCounts[key] || 0);
+        }
+      });
       const summary = Object.assign({
         reason: state.finalizedReason,
         runId: state.runId || 0,
@@ -5158,7 +5216,15 @@ return trSources[0]?.id || sources[0].id;
         emittedButNeverPlayCalledCount,
         playCalledButNeverStartedCount,
         skippedBeforePlayCallCount,
+        skippedBeforePlayCallReasonCounts,
         terminalReasonCounts,
+        terminalReasonCountsBreakdown,
+        prePlayFilterAudit: {
+          allowAudioEmit: "token-gate-only",
+          sampleAllowedCheck: "note-allowlist",
+          songAllowedBypass: true,
+          identityBasis: "songEventId+plannedTimeSec in song debug"
+        },
         songEventStats,
         startRate: Number((Math.min(1, ((Number(state.counts.emit) || 0) > 0 ? (Number(state.counts.start || 0) / Number(state.counts.emit || 0)) : 0))).toFixed(4))
       }, extra || {});
@@ -5258,12 +5324,18 @@ return trSources[0]?.id || sources[0].id;
         if (!noteState.routeCandidate) noteState.routeCandidate = "sample";
       }else if (key === "skip" && noteState){
         noteState.skipCount = Number(noteState.skipCount || 0) + 1;
+        const normalizedSkipReason = __normalizeSongSkipReason(payload.reason, payload);
+        payload.skipReason = normalizedSkipReason;
+        noteState.lastSkipReason = normalizedSkipReason;
+        if (!noteState.skipReasonCounts) noteState.skipReasonCounts = Object.create(null);
+        noteState.skipReasonCounts[normalizedSkipReason] = Number(noteState.skipReasonCounts[normalizedSkipReason] || 0) + 1;
+        if (!noteState.primarySkipReason) noteState.primarySkipReason = normalizedSkipReason;
         if (Number(noteState.playCallCount || 0) === 0 && Number(noteState.startedCount || 0) === 0){
           noteState.skippedBeforePlayCallCount = Number(noteState.skippedBeforePlayCallCount || 0) + 1;
         }
-        const normalizedSkipReason = __normalizeSongTerminalReason(payload.reason);
-        if (normalizedSkipReason === "token-stopped-before-start") noteState.tokenStoppedBeforeStartSeen = true;
-        else if (normalizedSkipReason === "filtered-nonplayable") noteState.filteredNonplayableSeen = true;
+        const normalizedTerminalReason = __normalizeSongTerminalReason(payload.reason);
+        if (normalizedTerminalReason === "token-stopped-before-start") noteState.tokenStoppedBeforeStartSeen = true;
+        else if (normalizedTerminalReason === "filtered-nonplayable") noteState.filteredNonplayableSeen = true;
       }else if (key === "start" && noteState){
         const summaryCounted = !noteState.startSummaryCounted;
         payload.summaryCounted = summaryCounted;
