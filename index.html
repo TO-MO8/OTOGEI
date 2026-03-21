@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-024"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-025"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -4771,6 +4771,7 @@ return trSources[0]?.id || sources[0].id;
         secondaryDropCount: 0,
         startSummaryCounted: false,
         secondaryDropSummaryCounted: false,
+        secondaryDropAfterPrimarySeen: false,
         lastStartRoute: "",
         lastStartPerfNow: null
       };
@@ -5046,6 +5047,22 @@ return trSources[0]?.id || sources[0].id;
       state.actualSongElapsedAudioSec = (Number.isFinite(nowAudioTime) && Number.isFinite(state.startedAudioTime))
         ? Number((nowAudioTime - state.startedAudioTime).toFixed(6))
         : null;
+      const playbackState = window.__songPlaybackDebugState || null;
+      const playbackNoteStates = playbackState && playbackState.noteStates ? playbackState.noteStates : null;
+      let primaryStartedEventCount = 0;
+      let secondaryDropAfterPrimaryCount = 0;
+      let emittedButNeverStartedCount = 0;
+      if (playbackNoteStates){
+        Object.keys(playbackNoteStates).forEach(eventKey => {
+          const noteState = playbackNoteStates[eventKey];
+          if (!noteState) return;
+          const started = Number(noteState.startedCount || 0) > 0;
+          const emitted = !!noteState.emitSummaryCounted;
+          if (started) primaryStartedEventCount += 1;
+          if (started && noteState.secondaryDropAfterPrimarySeen) secondaryDropAfterPrimaryCount += 1;
+          if (emitted && !started) emittedButNeverStartedCount += 1;
+        });
+      }
       const summary = Object.assign({
         reason: state.finalizedReason,
         runId: state.runId || 0,
@@ -5058,9 +5075,12 @@ return trSources[0]?.id || sources[0].id;
         diffSec: Number((state.actualSongElapsedSec - (Number(state.expectedSongEndSec) || 0)).toFixed(6)),
         emittedCount: Number(state.counts.emit || 0),
         startedCount: Number(state.counts.start || 0),
-        droppedCount: Number(state.counts.drop || 0),
+        droppedCount: Number(state.fatalDroppedCount || 0),
         fatalDroppedCount: Number(state.fatalDroppedCount || 0),
         secondaryDroppedCount: Number(state.secondaryDroppedCount || 0),
+        primaryStartedEventCount,
+        secondaryDropAfterPrimaryCount,
+        emittedButNeverStartedCount,
         startRate: Number((Math.min(1, ((Number(state.counts.emit) || 0) > 0 ? (Number(state.counts.start || 0) / Number(state.counts.emit || 0)) : 0))).toFixed(4))
       }, extra || {});
       const delaySummary = __computeSongDelayStats(state.noteDelays);
@@ -5161,17 +5181,22 @@ return trSources[0]?.id || sources[0].id;
         const separateDrop = (detail && typeof detail.separateDrop === "boolean")
           ? !!detail.separateDrop
           : (!!payload.priorStarted || resolvedReason === "fallback-aborted" || resolvedReason === "token-stopped" || resolvedReason === "secondary-route-dropped");
+        const secondaryDropAfterPrimary = !!payload.priorStarted && resolvedReason === "secondary-route-dropped";
+        const countSecondaryInSummary = !!(detail && detail.countSecondaryInSummary === true);
         let summaryCounted = true;
         if (separateDrop){
-          summaryCounted = !noteState.secondaryDropSummaryCounted;
+          summaryCounted = countSecondaryInSummary && !noteState.secondaryDropSummaryCounted;
           if (summaryCounted) noteState.secondaryDropSummaryCounted = true;
         }
         payload.branchReason = branchReason || null;
         payload.reason = resolvedReason;
         payload.separateDrop = separateDrop;
         payload.fatalDrop = !separateDrop;
+        payload.secondaryDropAfterPrimary = secondaryDropAfterPrimary;
+        payload.countSecondaryInSummary = countSecondaryInSummary;
         payload.summaryCounted = summaryCounted;
         noteState.dropCount = Number(noteState.dropCount || 0) + 1;
+        if (secondaryDropAfterPrimary) noteState.secondaryDropAfterPrimarySeen = true;
         if (separateDrop) noteState.secondaryDropCount = Number(noteState.secondaryDropCount || 0) + 1;
         else noteState.fatalDropCount = Number(noteState.fatalDropCount || 0) + 1;
       }
