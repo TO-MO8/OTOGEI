@@ -479,7 +479,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-003"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-004"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2666,27 +2666,88 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     return fallback || "unknown";
   }
 
+  function __describeLiveSampleResolvedObject(value){
+    const v = value;
+    const ctorName = (() => {
+      try{ return v && v.constructor && v.constructor.name || null; }catch(_){ return null; }
+    })();
+    const keys = (() => {
+      try{ return (v && typeof v === "object") ? Object.keys(v) : []; }catch(_){ return []; }
+    })();
+    return {
+      constructorName: ctorName,
+      keys,
+      pauseType: typeof (v && v.pause),
+      stopType: typeof (v && v.stop),
+      playType: typeof (v && v.play),
+      resolvedTypeField: v && v.type,
+      hasAudio: !!(v && v.audio)
+    };
+  }
+
+  function __wrapLiveHtmlAudioHandle(audio, note, meta, extra){
+    const a = (audio && audio.audio && typeof audio.audio.pause === "function") ? audio.audio : audio;
+    if (!a || typeof a.pause !== "function") return null;
+    const handle = Object.assign({
+      type: "html",
+      audio: a,
+      note: note || (meta && meta.note) || a.note || null,
+      __note: (meta && meta.note) || note || a.__note || a.note || null,
+      __via: (meta && meta.via) || a.__via || null,
+      __sample: (meta && meta.sample) || note || a.__sample || null,
+      __liveRoute: "sample / html audio",
+      pause(){ return a.pause(); },
+      play(){ return a.play(); },
+      stop(){
+        try{ a.pause(); }catch(_){ }
+        try{ a.currentTime = 0; }catch(_){ }
+      }
+    }, extra || {});
+    if (!Object.getOwnPropertyDescriptor(handle, "currentTime")){
+      Object.defineProperty(handle, "currentTime", {
+        configurable: true,
+        enumerable: false,
+        get(){ return a.currentTime; },
+        set(v){ a.currentTime = v; }
+      });
+    }
+    return __normalizeLiveSampleHandle(handle, meta);
+  }
+
   function __normalizeLiveSampleHandle(handle, meta){
     let h = handle;
+    let noHandleReason = null;
     try{
       if (h && !h.type){
-        if (h.handle && typeof h.handle === "object") h = h.handle;
-        else if (h.voice && typeof h.voice === "object") h = h.voice;
-        else if (h.inner && typeof h.inner === "object") h = h.inner;
-        else if (h.__resolvedHandle && typeof h.__resolvedHandle === "object") h = h.__resolvedHandle;
+        if (h.handle && typeof h.handle === "object"){
+          h = h.handle;
+        }else if (h.voice && typeof h.voice === "object"){
+          h = h.voice;
+        }else if (h.inner && typeof h.inner === "object"){
+          h = h.inner;
+        }else if (h.__resolvedHandle && typeof h.__resolvedHandle === "object"){
+          h = h.__resolvedHandle;
+        }
       }
     }catch(_){}
-    if (!h || typeof h !== "object") return h;
+    if (!h || typeof h !== "object"){
+      noHandleReason = h == null ? "not-object:nullish" : `not-object:${typeof h}`;
+      try{
+        console.log("[live sample] normalize result", {
+          normalizedType: null,
+          hasAudio: false,
+          stopType: typeof (h && h.stop),
+          pauseType: typeof (h && h.pause),
+          noHandleReason
+        });
+      }catch(_){}
+      return h;
+    }
     try{
       if (!h.type && typeof h.pause === "function"){
-        h = {
-          type: "html",
-          audio: h,
-          note: (meta && meta.note) || h.note || null,
-          __note: (meta && meta.note) || h.__note || h.note || null,
-          __via: (meta && meta.via) || h.__via || null,
-          __liveRoute: "sample / html audio"
-        };
+        h = __wrapLiveHtmlAudioHandle(h, (meta && meta.sample) || (meta && meta.note) || h.note || null, meta, {
+          __normalizedFrom: "pause-function"
+        }) || h;
       }
     }catch(_){}
     if (!h.type){
@@ -2699,6 +2760,19 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     if (!h.__via && meta && meta.via) h.__via = meta.via;
     if (!h.__liveRoute) h.__liveRoute = __liveRouteFromHandle(h, "sample");
     __ensureLiveVoiceMeta(h, meta);
+    if (!h.type) noHandleReason = "missing-type";
+    else if (h.type === "html" && !(h.audio && typeof h.audio.pause === "function")) noHandleReason = "html-missing-audio";
+    else if ((h.type === "buffer" || h.type === "webaudio") && typeof h.stop !== "function" && !(h.src || (Array.isArray(h.sources) && h.sources.length))) noHandleReason = `${h.type}-missing-stop-path`;
+    else if (typeof h.stop !== "function" && typeof h.pause !== "function" && !(h.audio && typeof h.audio.pause === "function")) noHandleReason = "missing-stop-and-pause";
+    try{
+      console.log("[live sample] normalize result", {
+        normalizedType: h.type || null,
+        hasAudio: !!h.audio,
+        stopType: typeof h.stop,
+        pauseType: typeof h.pause,
+        noHandleReason
+      });
+    }catch(_){}
     return h;
   }
   window.__normalizeLiveSampleHandle = __normalizeLiveSampleHandle;
@@ -2979,13 +3053,30 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
         __logLiveInputSample("before __readyPromise await", { sample, via: playMeta.via, note: playMeta.note, pendingStopRequested: !!pendingHandle.__pendingStopRequested });
         readyPromise
           .then(resolved => {
+            const resolvedInfo = __describeLiveSampleResolvedObject(resolved);
             __logLiveInputSample("after __readyPromise resolve", {
               sample,
               via: playMeta.via,
               note: playMeta.note,
               resolvedType: resolved && resolved.type || typeof resolved,
-              pendingStopRequested: !!pendingHandle.__pendingStopRequested
+              pendingStopRequested: !!pendingHandle.__pendingStopRequested,
+              constructorName: resolvedInfo.constructorName,
+              keys: resolvedInfo.keys,
+              pauseType: resolvedInfo.pauseType,
+              stopType: resolvedInfo.stopType,
+              playType: resolvedInfo.playType,
+              resolvedTypeField: resolvedInfo.resolvedTypeField,
+              hasAudio: resolvedInfo.hasAudio
             });
+            try{
+              console.log(`[live sample] after __readyPromise resolve constructor name: ${window.__toOneLineLogString(resolvedInfo.constructorName)}`);
+              console.log(`[live sample] after __readyPromise resolve Object.keys: ${window.__toOneLineLogString(resolvedInfo.keys)}`);
+              console.log(`[live sample] after __readyPromise resolve typeof resolved.pause: ${window.__toOneLineLogString(resolvedInfo.pauseType)}`);
+              console.log(`[live sample] after __readyPromise resolve typeof resolved.stop: ${window.__toOneLineLogString(resolvedInfo.stopType)}`);
+              console.log(`[live sample] after __readyPromise resolve typeof resolved.play: ${window.__toOneLineLogString(resolvedInfo.playType)}`);
+              console.log(`[live sample] after __readyPromise resolve resolved.type: ${window.__toOneLineLogString(resolvedInfo.resolvedTypeField)}`);
+              console.log(`[live sample] after __readyPromise resolve resolved.audio: ${window.__toOneLineLogString(resolvedInfo.hasAudio)}`);
+            }catch(_){ }
             const currentPending = window.__pendingHeldSamples && window.__pendingHeldSamples.get(sample);
             if (!currentPending || currentPending !== pendingHandle){
               __logLiveInputSample("start early return (pending replaced before resolve)", { sample, via: playMeta.via, note: playMeta.note });
@@ -2993,9 +3084,17 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
             }
             const finalized = __finalizeHeldSampleStart(sample, pendingHandle, resolved, playMeta);
             if (!finalized){
+              const normalizedResolved = __normalizeLiveSampleHandle(resolved, playMeta);
+              let noHandleReason = "unknown";
+              if (!resolved) noHandleReason = "resolved-nullish";
+              else if (!normalizedResolved) noHandleReason = "normalized-nullish";
+              else if (normalizedResolved.type === "pending") noHandleReason = "normalized-pending";
+              else if (!normalizedResolved.type) noHandleReason = "normalized-missing-type";
+              else if (normalizedResolved.type === "html" && !(normalizedResolved.audio && typeof normalizedResolved.audio.pause === "function")) noHandleReason = "normalized-html-missing-audio";
+              else if (typeof normalizedResolved.stop !== "function" && typeof normalizedResolved.pause !== "function") noHandleReason = "normalized-missing-stop-and-pause";
               try{ if (window.__pendingHeldSamples.get(sample) === pendingHandle) window.__pendingHeldSamples.delete(sample); }catch(_){ }
-              __logLiveStartRoute("sample / no-handle", { via: meta && meta.via, note: meta && meta.note, sample });
-              __logLiveInputSample("start early return (resolved no handle)", { sample, via: meta && meta.via, note: meta && meta.note });
+              __logLiveStartRoute("sample / no-handle", { via: meta && meta.via, note: meta && meta.note, sample, noHandleReason });
+              __logLiveInputSample("start early return (resolved no handle)", { sample, via: meta && meta.via, note: meta && meta.note, noHandleReason });
             }
             return finalized || resolved;
           })
@@ -4589,26 +4688,8 @@ useBtn.addEventListener("click", () => {
     }
     entry.idx = (entry.idx + 1) % Math.max(1, entry.list.length);
 
-    const handle = window.__normalizeLiveSampleHandle({ type:"html", audio:a, note, __liveRoute:"sample / html audio" }, meta);
+    const handle = __wrapLiveHtmlAudioHandle(a, note, meta);
     const liveGain = __resolveLiveInputSampleGainMultiplier(note, meta);
-    try{
-      if (handle && typeof handle === "object"){
-        handle.pause = function(){ return a.pause(); };
-        handle.play = function(){ return a.play(); };
-        handle.stop = function(){
-          try{ a.pause(); }catch(_){ }
-          try{ a.currentTime = 0; }catch(_){ }
-        };
-        if (!Object.getOwnPropertyDescriptor(handle, "currentTime")){
-          Object.defineProperty(handle, "currentTime", {
-            configurable: true,
-            enumerable: false,
-            get(){ return a.currentTime; },
-            set(v){ a.currentTime = v; }
-          });
-        }
-      }
-    }catch(_){}
     try{
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)) return null;
       try{ a.pause(); }catch(_){ }
@@ -4934,7 +5015,12 @@ window.addEventListener("DOMContentLoaded", ()=>{
         .then(buf => {
           let resolved = null;
           if (buf) resolved = __playBufferNow(note, meta);
-          if (!resolved) resolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
+          if (!resolved){
+            const htmlResolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
+            resolved = __wrapLiveHtmlAudioHandle(htmlResolved, note, meta, {
+              __wrappedFromHtmlFallback: true
+            });
+          }
           resolved = window.__normalizeLiveSampleHandle(resolved, meta);
           if (!resolved || resolved.type === "pending") return null;
           return __adoptLiveSampleHandle(pending, resolved, meta);
