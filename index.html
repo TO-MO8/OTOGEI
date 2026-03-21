@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-018"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-019"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -596,11 +596,39 @@ function __safeIsLiveInputSampleMeta(meta){
 }
 window.__logPlayPianoSampleEntry = window.__logPlayPianoSampleEntry || function(tag, note, meta){
   try{
+    const isSongPlayback = !!(meta && meta.sourceType === "song");
+    const state = isSongPlayback ? (window.__songPlaybackDebugState || null) : null;
+    const token = Number(meta && meta.token) || 0;
+    const emitKey = (isSongPlayback && token && note) ? `${token}:${note}` : "";
+    const noteState = (emitKey && state && state.noteStates) ? state.noteStates[emitKey] : null;
+    const callPerf = Number(meta && meta.callPerf);
+    const lastEnter = state && state.lastPlayPianoSampleEnter ? state.lastPlayPianoSampleEnter : null;
+    const sameCallPerf = !!(String(tag || "") === "__playPianoSample html enter"
+      && emitKey
+      && lastEnter
+      && lastEnter.emitKey === emitKey
+      && Number.isFinite(callPerf)
+      && Number(lastEnter.callPerf) === callPerf);
+    const sameEmitKey = !!(String(tag || "") === "__playPianoSample html enter"
+      && emitKey
+      && lastEnter
+      && lastEnter.emitKey === emitKey);
+    const priorStarted = !!(noteState && Number(noteState.startedCount || 0) > 0);
     console.log(`[live sample] ${tag} note: ${window.__toOneLineLogString(note)}`);
     console.log(`[live sample] ${tag} via: ${window.__toOneLineLogString(meta && meta.via)}`);
     console.log(`[live sample] ${tag} sourceType: ${window.__toOneLineLogString(meta && meta.sourceType)}`);
     console.log(`[live sample] ${tag} isLiveInput: ${window.__toOneLineLogString(__safeIsLiveInputSampleMeta(meta))}`);
     console.log(`[live sample] ${tag} callPerf: ${window.__toOneLineLogString(meta && meta.callPerf)}`);
+    console.log(`[live sample] ${tag} sameCallPerf: ${window.__toOneLineLogString(sameCallPerf)}`);
+    console.log(`[live sample] ${tag} sameEmitKey: ${window.__toOneLineLogString(sameEmitKey)}`);
+    console.log(`[live sample] ${tag} priorStarted: ${window.__toOneLineLogString(priorStarted)}`);
+    if (isSongPlayback && state && String(tag || "") === "__playPianoSample enter"){
+      state.lastPlayPianoSampleEnter = {
+        emitKey,
+        note: String(note || ""),
+        callPerf: Number.isFinite(callPerf) ? callPerf : null
+      };
+    }
   }catch(_e){}
 };
 window.__measureBufferPeak = window.__measureBufferPeak || function(buf){
@@ -4632,7 +4660,9 @@ return trSources[0]?.id || sources[0].id;
     startedAt: 0,
     counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 },
     emitKeyCounts: Object.create(null),
-    allowKeyCounts: Object.create(null)
+    allowKeyCounts: Object.create(null),
+    noteStates: Object.create(null),
+    lastPlayPianoSampleEnter: null
   };
   window.__songLengthDebugState = window.__songLengthDebugState || {
     runId: 0,
@@ -4645,11 +4675,42 @@ return trSources[0]?.id || sources[0].id;
     actualSongElapsedSec: null,
     actualSongElapsedAudioSec: null,
     counts: { emit:0, start:0, drop:0 },
+    fatalDroppedCount: 0,
+    secondaryDroppedCount: 0,
     noteDelays: [],
     routeStats: Object.create(null),
     finalized: false,
     finalizedReason: ""
   };
+  function __getSongPlaybackEmitKey(token, note){
+    const numToken = Number(token || 0);
+    const textNote = String(note || "");
+    return (numToken && textNote) ? `${numToken}:${textNote}` : "";
+  }
+  function __ensureSongPlaybackNoteState(state, emitKey){
+    if (!state || !emitKey) return null;
+    if (!state.noteStates) state.noteStates = Object.create(null);
+    if (!state.noteStates[emitKey]){
+      state.noteStates[emitKey] = {
+        startedCount: 0,
+        dropCount: 0,
+        fatalDropCount: 0,
+        secondaryDropCount: 0,
+        lastStartRoute: "",
+        lastStartPerfNow: null
+      };
+    }
+    return state.noteStates[emitKey];
+  }
+  function __resolveSongPlaybackDropReason(branchReason, priorStarted){
+    const raw = String(branchReason || "").trim();
+    if (raw === "primary-start-failed" || raw === "secondary-route-dropped" || raw === "fallback-aborted" || raw === "token-stopped"){
+      return raw;
+    }
+    if (raw === "song-preload-rejected") return "fallback-aborted";
+    if (raw.startsWith("allow-audio-emit-blocked")) return "token-stopped";
+    return priorStarted ? "secondary-route-dropped" : "primary-start-failed";
+  }
   function __normalizeSongDebugRoute(route){
     const raw = String(route || "").toLowerCase();
     if (raw.includes("html")) return "html";
@@ -4725,7 +4786,9 @@ return trSources[0]?.id || sources[0].id;
       startedAt: performance.now(),
       counts: { emit:0, playCall:0, start:0, skip:0, drop:0, stop:0 },
       emitKeyCounts: Object.create(null),
-      allowKeyCounts: Object.create(null)
+      allowKeyCounts: Object.create(null),
+      noteStates: Object.create(null),
+      lastPlayPianoSampleEnter: null
     };
     window.__songPlaybackDebugState = next;
     try{ console.log("[song debug reset]", next); }catch(_e){}
@@ -4793,6 +4856,8 @@ return trSources[0]?.id || sources[0].id;
       actualSongElapsedSec: null,
       actualSongElapsedAudioSec: null,
       counts: { emit:0, start:0, drop:0 },
+      fatalDroppedCount: 0,
+      secondaryDroppedCount: 0,
       noteDelays: [],
       routeStats: Object.create(null),
       finalized: false,
@@ -4830,6 +4895,8 @@ return trSources[0]?.id || sources[0].id;
       }else if (key === "drop"){
         const routeInfo = __ensureSongRouteDebugState(state, detail && detail.route);
         routeInfo.stats.droppedCount += 1;
+        if (detail && detail.separateDrop) state.secondaryDroppedCount += 1;
+        else state.fatalDroppedCount += 1;
       }
       return state;
     }catch(_e){}
@@ -4859,6 +4926,8 @@ return trSources[0]?.id || sources[0].id;
         emittedCount: Number(state.counts.emit || 0),
         startedCount: Number(state.counts.start || 0),
         droppedCount: Number(state.counts.drop || 0),
+        fatalDroppedCount: Number(state.fatalDroppedCount || 0),
+        secondaryDroppedCount: Number(state.secondaryDroppedCount || 0),
         startRate: Number(((Number(state.counts.emit) || 0) > 0 ? (Number(state.counts.start || 0) / Number(state.counts.emit || 0)) : 0).toFixed(4))
       }, extra || {});
       const delaySummary = __computeSongDelayStats(state.noteDelays);
@@ -4895,7 +4964,8 @@ return trSources[0]?.id || sources[0].id;
       if (key && Object.prototype.hasOwnProperty.call(state.counts, key)) state.counts[key] += 1;
       const token = Number(state.token || 0);
       const note = String(detail && detail.note || "");
-      const emitKey = (token && note) ? `${token}:${note}` : "";
+      const emitKey = __getSongPlaybackEmitKey(token, note);
+      const noteState = __ensureSongPlaybackNoteState(state, emitKey);
       let emitKeyCount = null;
       if (key === "emit" && emitKey){
         if (!state.emitKeyCounts) state.emitKeyCounts = Object.create(null);
@@ -4917,6 +4987,25 @@ return trSources[0]?.id || sources[0].id;
         payload.emitKey = emitKey;
         payload.emitKeyCount = emitKeyCount;
         payload.emitDuplicate = emitKeyCount > 1;
+        payload.priorStarted = !!(noteState && Number(noteState.startedCount || 0) > 0);
+      }
+      if (key === "start" && noteState){
+        noteState.startedCount = Number(noteState.startedCount || 0) + 1;
+        noteState.lastStartRoute = String(payload.route || "");
+        noteState.lastStartPerfNow = Number.isFinite(Number(payload.actualStartPerfNow)) ? Number(payload.actualStartPerfNow) : performance.now();
+      }else if (key === "drop" && noteState){
+        const branchReason = String(payload.reason || "");
+        const resolvedReason = __resolveSongPlaybackDropReason(branchReason, !!payload.priorStarted);
+        const separateDrop = (detail && typeof detail.separateDrop === "boolean")
+          ? !!detail.separateDrop
+          : (!!payload.priorStarted || resolvedReason === "fallback-aborted" || resolvedReason === "token-stopped" || resolvedReason === "secondary-route-dropped");
+        payload.branchReason = branchReason || null;
+        payload.reason = resolvedReason;
+        payload.separateDrop = separateDrop;
+        payload.fatalDrop = !separateDrop;
+        noteState.dropCount = Number(noteState.dropCount || 0) + 1;
+        if (separateDrop) noteState.secondaryDropCount = Number(noteState.secondaryDropCount || 0) + 1;
+        else noteState.fatalDropCount = Number(noteState.fatalDropCount || 0) + 1;
       }
       console.log("[song debug]", payload);
       if (key === "emit" || key === "start" || key === "drop") __markSongLengthDebug(key, payload);
@@ -5462,9 +5551,10 @@ useBtn.addEventListener("click", () => {
     const liveGain = __resolveLiveInputSampleGainMultiplier(note, meta);
     try{
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)){
-        try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("skip", {
+        try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
           note,
-          reason: "allow-audio-emit-blocked-html"
+          reason: "allow-audio-emit-blocked-html",
+          route: "sample / html audio"
         }); }catch(_){}
         return null;
       }
@@ -5505,6 +5595,7 @@ useBtn.addEventListener("click", () => {
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
         reason: "html-play-exception",
+        route: "sample / html audio",
         error: e && e.message ? e.message : String(e)
       }); }catch(_){}
       return handle;
@@ -5667,9 +5758,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
   function __playBufferNow(note, meta){
     if (window.__allowAudioEmit && !window.__allowAudioEmit(note, meta)){
-      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("skip", {
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
-        reason: "allow-audio-emit-blocked"
+        reason: "allow-audio-emit-blocked",
+        route: "sample / webaudio"
       }); }catch(_){}
       return null;
     }
@@ -5679,7 +5771,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
     if (!buf){
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
-        reason: "buffer-missing-at-start"
+        reason: "buffer-missing-at-start",
+        route: "sample / webaudio"
       }); }catch(_){}
       return null;
     }
@@ -5775,6 +5868,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
         reason: "buffer-start-exception",
+        route: "sample / webaudio",
         error: e && e.message ? e.message : String(e)
       }); }catch(_){}
       return null;
