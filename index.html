@@ -520,7 +520,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-014"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-015"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2771,7 +2771,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     const fallbackGainByOctave = {
       3: 0.64,
       4: 0.60,
-      5: 0.58
+      5: 0.58,
+      6: 0.58
     };
     const fallbackGain = Object.prototype.hasOwnProperty.call(fallbackGainByOctave, octave)
       ? fallbackGainByOctave[octave]
@@ -2784,7 +2785,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
 
     if (Number.isFinite(sourcePeak) && sourcePeak > 0){
       const resolved = targetPostPeak / sourcePeak;
-      return Math.max(0.45, Math.min(1.0, resolved));
+      return Math.max(0.45, Math.min(6.0, resolved));
     }
 
     return fallbackGain;
@@ -4856,6 +4857,40 @@ useBtn.addEventListener("click", () => {
     return a;
   }
 
+  function __setLiveHtmlAudioGain(audio, gain){
+    const a = (audio && audio.audio) ? audio.audio : audio;
+    if (!a) return null;
+    const resolvedGain = Number.isFinite(Number(gain)) ? Math.max(0, Number(gain)) : 1.0;
+    let appliedGain = Math.min(1.0, resolvedGain);
+    try{ a.volume = 1.0; }catch(_){ }
+    try{
+      const ctx = window.ensureAudioCreated && window.ensureAudioCreated();
+      if (!ctx || typeof ctx.createMediaElementSource !== "function" || typeof ctx.createGain !== "function"){
+        a.volume = appliedGain;
+        return appliedGain;
+      }
+      if (!a.__liveSampleMediaSource){
+        const src = ctx.createMediaElementSource(a);
+        const gainNode = ctx.createGain();
+        src.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        a.__liveSampleMediaSource = src;
+        a.__liveSampleGainNode = gainNode;
+      }
+      if (a.__liveSampleGainNode && a.__liveSampleGainNode.gain){
+        const now = Number(ctx.currentTime) || 0;
+        a.__liveSampleGainNode.gain.cancelScheduledValues(now);
+        a.__liveSampleGainNode.gain.setValueAtTime(resolvedGain, now);
+        appliedGain = resolvedGain;
+      }else{
+        a.volume = appliedGain;
+      }
+    }catch(_){
+      try{ a.volume = appliedGain; }catch(__){}
+    }
+    return appliedGain;
+  }
+
   window.__preloadPianoSample = function(note){
     if (pool.has(note)) return;
     const url = __noteUrl(note);
@@ -4895,10 +4930,10 @@ useBtn.addEventListener("click", () => {
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)) return null;
       try{ a.pause(); }catch(_){ }
       try{ a.currentTime = 0; }catch(_){ }
-      a.volume = liveGain;
-      if (handle && handle.audio) handle.audio.volume = liveGain;
-      if (handle && typeof handle === "object") handle.__gainMultiplier = liveGain;
-      try{ window.__captureLiveInputDebugMeter && window.__captureLiveInputDebugMeter(note, meta, { route:"sample / html audio", gainMultiplier: liveGain, handle }); }catch(_){ }
+      const appliedGain = __setLiveHtmlAudioGain(a, liveGain);
+      if (handle && handle.audio) __setLiveHtmlAudioGain(handle.audio, liveGain);
+      if (handle && typeof handle === "object") handle.__gainMultiplier = appliedGain;
+      try{ window.__captureLiveInputDebugMeter && window.__captureLiveInputDebugMeter(note, meta, { route:"sample / html audio", gainMultiplier: appliedGain, handle }); }catch(_){ }
       try{
         const p = a.play();
         if (p && typeof p.catch === "function") p.catch(err => console.warn("[sample play blocked]", err));
