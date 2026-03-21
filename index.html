@@ -479,7 +479,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-002"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260321-003"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2568,8 +2568,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   const __LIVE_INPUT_SAMPLE_LOG__ = true;
   const __MIN_INPUT_SAMPLE_MS__ = 0;
   const __MIN_INPUT_SAMPLE_HTML_MS__ = 0;
-  const __LIVE_INPUT_RELEASE_MS__ = 7;
-  const __LIVE_INPUT_WEB_AUDIO_RELEASE_MS__ = 9;
+  const __LIVE_INPUT_RELEASE_MS__ = 6;
+  const __LIVE_INPUT_WEB_AUDIO_RELEASE_MS__ = 8;
   let __liveVoiceSeq = 0;
   let __liveStopSeq = 0;
 
@@ -2585,8 +2585,8 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     const octave = m ? parseInt(m[2], 10) : NaN;
     if (!Number.isFinite(octave)) return 1.0;
     if (octave <= 3) return 0.68;
-    if (octave === 4) return 0.78;
-    if (octave === 5) return 0.88;
+    if (octave === 4) return 0.74;
+    if (octave === 5) return 0.84;
     return 1.0;
   }
   window.__getLiveInputSampleGainMultiplier = __getLiveInputSampleGainMultiplier;
@@ -4590,6 +4590,7 @@ useBtn.addEventListener("click", () => {
     entry.idx = (entry.idx + 1) % Math.max(1, entry.list.length);
 
     const handle = window.__normalizeLiveSampleHandle({ type:"html", audio:a, note, __liveRoute:"sample / html audio" }, meta);
+    const liveGain = __resolveLiveInputSampleGainMultiplier(note, meta);
     try{
       if (handle && typeof handle === "object"){
         handle.pause = function(){ return a.pause(); };
@@ -4612,7 +4613,9 @@ useBtn.addEventListener("click", () => {
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)) return null;
       try{ a.pause(); }catch(_){ }
       try{ a.currentTime = 0; }catch(_){ }
-      a.volume = __resolveLiveInputSampleGainMultiplier(note, meta);
+      a.volume = liveGain;
+      if (handle && handle.audio) handle.audio.volume = liveGain;
+      if (handle && typeof handle === "object") handle.__gainMultiplier = liveGain;
       try{
         const p = a.play();
         if (p && typeof p.catch === "function") p.catch(err => console.warn("[sample play blocked]", err));
