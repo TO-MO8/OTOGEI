@@ -525,7 +525,15 @@ window.sampleBufCache = window.sampleCache;
 
 
 // baseline固定: #75 の一曲再生 runtime / 挙動を正とし、#76 で入った song 側の sample 解決変更は戻したまま維持する
-const __APP_BUILD_ID__ = "BUILD 20260322-047-pr75-song-runtime-diag"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-047-pr75-song-runtime-diag-fix1"; // index.html を修正したコミットでは必ず更新する
+const __SONG_DIAG_DRUM_WATCH_MIDI__ = Object.freeze({
+  C2: 36,
+  F2: 41,
+  Fs2: 42,
+  Gs2: 44,
+  As2: 46
+});
+const __SONG_DIAG_DRUM_WATCH_SET__ = new Set(Object.values(__SONG_DIAG_DRUM_WATCH_MIDI__));
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -4931,14 +4939,6 @@ return trSources[0]?.id || sources[0].id;
     __songPlaybackState.isAllPlaying = !!v;
     return __songPlaybackState.isAllPlaying;
   };
-  const __SONG_DIAG_DRUM_WATCH_MIDI__ = Object.freeze({
-    C2: 36,
-    F2: 41,
-    Fs2: 42,
-    Gs2: 44,
-    As2: 46
-  });
-  const __SONG_DIAG_DRUM_WATCH_SET__ = new Set(Object.values(__SONG_DIAG_DRUM_WATCH_MIDI__));
   function __songDiagNoteNameFromMidi(midi){
     const nn = __midiToNoteName(Number(midi));
     return nn && nn.n != null && nn.o != null ? `${String(nn.n).replace(/#/g, "s")}${nn.o}` : "";
