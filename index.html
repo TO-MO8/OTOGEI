@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-030"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-031"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1742,9 +1742,27 @@ async function playSample(note, octave, durMs, opts={}){
     const sampleRequest = (typeof window.__resolvePianoSampleRequest === "function")
       ? window.__resolvePianoSampleRequest(full)
       : { requestedNote: full, resolvedSampleKey: full, resolvedNoteUrl: "" };
-    const playbackSampleKey = (isSongPlayback && sampleRequest && sampleRequest.resolvedSampleKey)
+    const resolvedPlaybackSampleKey = (sampleRequest && sampleRequest.resolvedSampleKey)
       ? String(sampleRequest.resolvedSampleKey)
       : full;
+    const playbackSampleKey = full;
+    const chosenPlaybackRoute = isSongPlayback ? "sample / requested-note" : "sample";
+    const isRawPianoPath = !!isSongPlayback;
+    const logSongPlaybackRoute = (stage, routeOverride, extra) => {
+      if (!isSongPlayback) return;
+      try{
+        console.log("[song playback route]", Object.assign({
+          stage: String(stage || "log"),
+          requestedNote: sampleRequest.requestedNote,
+          resolvedSampleKey: resolvedPlaybackSampleKey,
+          resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          chosenPlaybackRoute: routeOverride || chosenPlaybackRoute,
+          isRawPianoPath,
+          sourceType: opts.sourceType || null,
+          via
+        }, extra || {}));
+      }catch(_e){}
+    };
     const getSongCurrentAudioTime = () => {
       try{
         const ctx = window.audioCtx || (typeof window.ensureAudioCreated === "function" ? window.ensureAudioCreated() : null);
@@ -1759,8 +1777,12 @@ async function playSample(note, octave, durMs, opts={}){
         window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
           note: full,
           requestedNote: sampleRequest.requestedNote,
-          resolvedSampleKey: playbackSampleKey,
+          resolvedSampleKey: resolvedPlaybackSampleKey,
           resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          chosenPlaybackRoute,
+          isRawPianoPath,
+          sourceType: opts.sourceType || null,
+          via,
           matchLiveInputSample,
           hadBuffer,
           songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
@@ -1777,8 +1799,12 @@ async function playSample(note, octave, durMs, opts={}){
                 note: full,
                 reason: buf ? "song-preload-resolved" : "song-preload-resolved-empty",
                 requestedNote: sampleRequest.requestedNote,
-                resolvedSampleKey: playbackSampleKey,
+                resolvedSampleKey: resolvedPlaybackSampleKey,
                 resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+                chosenPlaybackRoute,
+                isRawPianoPath,
+                sourceType: opts.sourceType || null,
+                via,
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
                 songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
                 songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
@@ -1790,8 +1816,12 @@ async function playSample(note, octave, durMs, opts={}){
                 note: full,
                 reason: "song-preload-rejected",
                 requestedNote: sampleRequest.requestedNote,
-                resolvedSampleKey: playbackSampleKey,
+                resolvedSampleKey: resolvedPlaybackSampleKey,
                 resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+                chosenPlaybackRoute,
+                isRawPianoPath,
+                sourceType: opts.sourceType || null,
+                via,
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
                 songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
                 songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
@@ -1831,8 +1861,12 @@ async function playSample(note, octave, durMs, opts={}){
     try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("playCall", {
       note: full,
       requestedNote: sampleRequest.requestedNote,
-      resolvedSampleKey: playbackSampleKey,
+      resolvedSampleKey: resolvedPlaybackSampleKey,
       resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+      chosenPlaybackRoute,
+      isRawPianoPath,
+      sourceType: opts.sourceType || null,
+      via,
       durMs: sampleMeta.durMs,
       autoStopFadeMs,
       matchLiveInputSample,
@@ -1843,8 +1877,11 @@ async function playSample(note, octave, durMs, opts={}){
       songNoteIndex: sampleMeta.songNoteIndex
     }); }catch(_){}
     sampleMeta.requestedNote = sampleRequest.requestedNote;
-    sampleMeta.resolvedSampleKey = playbackSampleKey;
+    sampleMeta.resolvedSampleKey = resolvedPlaybackSampleKey;
     sampleMeta.resolvedNoteUrl = sampleRequest.resolvedNoteUrl;
+    sampleMeta.chosenPlaybackRoute = chosenPlaybackRoute;
+    sampleMeta.isRawPianoPath = isRawPianoPath;
+    logSongPlaybackRoute("playCall", chosenPlaybackRoute, { note: full, playbackSampleKey });
     const h = window.__playPianoSample(playbackSampleKey, sampleMeta);
     try{
       if (isSongPlayback && window.__markSongPlaybackDebug){
@@ -1855,8 +1892,12 @@ async function playSample(note, octave, durMs, opts={}){
           note: full,
           reason: h ? "play-handle-created" : "play-returned-null",
           requestedNote: sampleRequest.requestedNote,
-          resolvedSampleKey: playbackSampleKey,
+          resolvedSampleKey: resolvedPlaybackSampleKey,
           resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          chosenPlaybackRoute: h && h.__liveRoute ? h.__liveRoute : chosenPlaybackRoute,
+          isRawPianoPath,
+          sourceType: opts.sourceType || null,
+          via,
           handleType: h && (h.type || typeof h) || null,
           handleState,
           hasBuffer,
@@ -1868,6 +1909,12 @@ async function playSample(note, octave, durMs, opts={}){
           plannedTimeSec: sampleMeta.plannedTimeSec,
           songEventId: sampleMeta.songEventId,
           songNoteIndex: sampleMeta.songNoteIndex
+        });
+        logSongPlaybackRoute(h ? "play-handle-created" : "play-returned-null", h && h.__liveRoute ? h.__liveRoute : chosenPlaybackRoute, {
+          note: full,
+          playbackSampleKey,
+          handleState,
+          hasBuffer
         });
       }
     }catch(_){}
@@ -1881,13 +1928,23 @@ async function playSample(note, octave, durMs, opts={}){
             : resolvedHandle;
           const handleState = __getSongPlaybackHandleState(resolved || resolvedHandle || h, sampleMeta);
           const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
+          logSongPlaybackRoute("readyPromise", (resolved && resolved.__liveRoute) ? resolved.__liveRoute : chosenPlaybackRoute, {
+            note: full,
+            playbackSampleKey,
+            handleState,
+            hasBuffer
+          });
           if (!resolved || handleState === "pending-handle" || handleState === "pending-handle-not-ready"){
             window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
               note: full,
               reason: hasBuffer ? "route-aborted-before-start" : "pending-handle-not-ready",
               requestedNote: sampleRequest.requestedNote,
-              resolvedSampleKey: playbackSampleKey,
+              resolvedSampleKey: resolvedPlaybackSampleKey,
               resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+              chosenPlaybackRoute: "sample / webaudio",
+              isRawPianoPath,
+              sourceType: opts.sourceType || null,
+              via,
               handleState,
               hasBuffer,
               hasReadyPromise: true,
@@ -1907,8 +1964,12 @@ async function playSample(note, octave, durMs, opts={}){
             note: full,
             reason: "preload-timeout",
             requestedNote: sampleRequest.requestedNote,
-            resolvedSampleKey: playbackSampleKey,
+            resolvedSampleKey: resolvedPlaybackSampleKey,
             resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+            chosenPlaybackRoute: "sample / webaudio",
+            isRawPianoPath,
+            sourceType: opts.sourceType || null,
+            via,
             handleState: "pending-handle-not-ready",
             hasBuffer: !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey))),
             hasReadyPromise: true,
