@@ -524,9 +524,11 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-// baseline固定: 現在の「一曲再生で生音が鳴る状態」を正として扱い、song runtime / sample route / lookup / preload / fallback は変更しない
-const __APP_BUILD_ID__ = "BUILD 20260322-044-song-runtime-back-to-baseline"; // index.html を修正したコミットでは必ず更新する
+// baseline固定: #75 の一曲再生 runtime / 挙動を正とし、#76 で入った song 側の sample 解決変更は戻したまま維持する
+const __APP_BUILD_ID__ = "BUILD 20260322-045-baseline-pr75-fixed-vs-pr76"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_BASELINE_NOTE__ = "#75 baseline固定: 比較対象は #75 → #76 のみ。回帰原因候補は playcall-no-start 強化時に入った song 側の sample 解決/runtime 変更。";
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
+window.__APP_BUILD_BASELINE_NOTE__ = __APP_BUILD_BASELINE_NOTE__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
 window.__liveSampleDebugHistory = window.__liveSampleDebugHistory || [];
@@ -557,6 +559,7 @@ window.__applyBuildVersionBadge = function(){
     }
     if (!window.__buildVersionLogged){
       console.log("[build/version]", currentBuildId);
+      console.log("[build/baseline]", window.__APP_BUILD_BASELINE_NOTE__ || "");
       window.__buildVersionLogged = true;
     }
   }catch(_e){}
