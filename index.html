@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-037"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-038"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1788,6 +1788,8 @@ async function playSample(note, octave, durMs, opts={}){
           requestedNote: sampleRequest.requestedNote,
           resolvedSampleKey: resolvedPlaybackSampleKey,
           resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          sampleKey: resolvedPlaybackSampleKey,
+          sampleUrl: sampleRequest.resolvedNoteUrl,
           handleLookupKey,
           preloadLookupKey,
           hasSampleHandle: !!hasSampleHandle,
@@ -1808,6 +1810,8 @@ async function playSample(note, octave, durMs, opts={}){
           requestedNote: sampleRequest.requestedNote,
           resolvedSampleKey: resolvedPlaybackSampleKey,
           resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          sampleKey: resolvedPlaybackSampleKey,
+          sampleUrl: sampleRequest.resolvedNoteUrl,
           chosenPlaybackRoute: routeOverride || chosenPlaybackRoute,
           routeDecisionReason,
           isRawPianoPath,
@@ -1839,6 +1843,8 @@ async function playSample(note, octave, durMs, opts={}){
           requestedNote: sampleRequest.requestedNote,
           resolvedSampleKey: resolvedPlaybackSampleKey,
           resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          sampleKey: resolvedPlaybackSampleKey,
+          sampleUrl: sampleRequest.resolvedNoteUrl,
           handleLookupKey,
           preloadLookupKey,
           chosenPlaybackRoute,
@@ -1936,6 +1942,8 @@ async function playSample(note, octave, durMs, opts={}){
       requestedNote: sampleRequest.requestedNote,
       resolvedSampleKey: resolvedPlaybackSampleKey,
       resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+      sampleKey: resolvedPlaybackSampleKey,
+      sampleUrl: sampleRequest.resolvedNoteUrl,
       handleLookupKey,
       preloadLookupKey,
       chosenPlaybackRoute,
@@ -7073,8 +7081,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
   window.__playPianoSample = function(note, meta){
     try{ window.__logPlayPianoSampleEntry("__playPianoSample enter", note, meta); }catch(_){ }
     const isLiveInput = __safeIsLiveInputSampleMeta(meta);
-    const isScheduledSong = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
-    const shouldWaitForBuffer = isLiveInput || isScheduledSong;
+    const shouldWaitForBuffer = isLiveInput;
     // If buffer ready, this is the fastest path
     const h = __playBufferNow(note, meta);
     if (h){
