@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-033"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-034"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1755,8 +1755,28 @@ async function playSample(note, octave, durMs, opts={}){
     const resolvedPlaybackSampleKey = (sampleRequest && sampleRequest.resolvedSampleKey)
       ? String(sampleRequest.resolvedSampleKey)
       : full;
-    const playbackSampleKey = full;
-    const getHasSongSampleBuffer = () => !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
+    const playbackSampleKey = isSongPlayback
+      ? __resolveSongSampleLookupKey(sampleRequest.requestedNote, resolvedPlaybackSampleKey, sampleRequest.resolvedNoteUrl)
+      : full;
+    const handleLookupKey = playbackSampleKey;
+    const preloadLookupKey = playbackSampleKey;
+    const getHasSongSampleBuffer = () => !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl);
+    const shouldLogSongLookupDebug = isSongPlayback && /^(?:F2|C2|Gs2|Fs2|As2)$/.test(String(sampleRequest.requestedNote || full));
+    const logSongLookupDebug = (stage, hasSampleHandle, hasBuffer) => {
+      if (!shouldLogSongLookupDebug) return;
+      try{
+        console.log("[song sample lookup debug]", {
+          stage: String(stage || "log"),
+          requestedNote: sampleRequest.requestedNote,
+          resolvedSampleKey: resolvedPlaybackSampleKey,
+          resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          handleLookupKey,
+          preloadLookupKey,
+          hasSampleHandle: !!hasSampleHandle,
+          hasBuffer: typeof hasBuffer === "boolean" ? hasBuffer : getHasSongSampleBuffer()
+        });
+      }catch(_e){}
+    };
     const chosenPlaybackRoute = isSongPlayback ? "sample / requested-note" : "sample";
     const routeDecisionReason = String((opts && opts.routeDecisionReason) || (isSongPlayback ? (soundMode === "sample" ? "sample-selected" : "song-route-overridden") : "sample-selected"));
     const isRawPianoPath = !!isSongPlayback;
@@ -1773,6 +1793,8 @@ async function playSample(note, octave, durMs, opts={}){
           isRawPianoPath,
           hasSampleHandle: false,
           hasBuffer: getHasSongSampleBuffer(),
+          handleLookupKey,
+          preloadLookupKey,
           sourceType: opts.sourceType || null,
           via
         }, extra || {}));
@@ -1788,12 +1810,15 @@ async function playSample(note, octave, durMs, opts={}){
     };
     if (isSongPlayback){
       try{
-        const hadBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
+        const hadBuffer = !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl);
+        logSongLookupDebug("preload-check", false, hadBuffer);
         window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
           note: full,
           requestedNote: sampleRequest.requestedNote,
           resolvedSampleKey: resolvedPlaybackSampleKey,
           resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          handleLookupKey,
+          preloadLookupKey,
           chosenPlaybackRoute,
           routeDecisionReason,
           isRawPianoPath,
@@ -1809,7 +1834,7 @@ async function playSample(note, octave, durMs, opts={}){
         });
         if (!hadBuffer && typeof window.__preloadPianoBuffer === "function"){
           const preloadStartedAt = performance.now();
-          const preloadPromise = window.__preloadPianoBuffer(playbackSampleKey);
+          const preloadPromise = window.__preloadPianoBuffer(preloadLookupKey);
           if (preloadPromise && typeof preloadPromise.then === "function"){
             preloadPromise.then(buf => {
               try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
@@ -1818,10 +1843,13 @@ async function playSample(note, octave, durMs, opts={}){
                 requestedNote: sampleRequest.requestedNote,
                 resolvedSampleKey: resolvedPlaybackSampleKey,
                 resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+                handleLookupKey,
+                preloadLookupKey,
                 chosenPlaybackRoute,
                 routeDecisionReason,
                 isRawPianoPath,
                 hasSampleHandle: false,
+                hasBuffer: !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl),
                 sourceType: opts.sourceType || null,
                 via,
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
@@ -1837,6 +1865,8 @@ async function playSample(note, octave, durMs, opts={}){
                 requestedNote: sampleRequest.requestedNote,
                 resolvedSampleKey: resolvedPlaybackSampleKey,
                 resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+                handleLookupKey,
+                preloadLookupKey,
                 chosenPlaybackRoute,
                 routeDecisionReason: "sample-route-disabled",
                 isRawPianoPath,
@@ -1884,6 +1914,8 @@ async function playSample(note, octave, durMs, opts={}){
       requestedNote: sampleRequest.requestedNote,
       resolvedSampleKey: resolvedPlaybackSampleKey,
       resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+      handleLookupKey,
+      preloadLookupKey,
       chosenPlaybackRoute,
       routeDecisionReason,
       isRawPianoPath,
@@ -1902,6 +1934,8 @@ async function playSample(note, octave, durMs, opts={}){
     sampleMeta.requestedNote = sampleRequest.requestedNote;
     sampleMeta.resolvedSampleKey = resolvedPlaybackSampleKey;
     sampleMeta.resolvedNoteUrl = sampleRequest.resolvedNoteUrl;
+    sampleMeta.handleLookupKey = handleLookupKey;
+    sampleMeta.preloadLookupKey = preloadLookupKey;
     sampleMeta.chosenPlaybackRoute = chosenPlaybackRoute;
     sampleMeta.routeDecisionReason = routeDecisionReason;
     sampleMeta.isRawPianoPath = isRawPianoPath;
@@ -1911,13 +1945,16 @@ async function playSample(note, octave, durMs, opts={}){
       if (isSongPlayback && window.__markSongPlaybackDebug){
         const currentAudioTime = getSongCurrentAudioTime();
         const handleState = __getSongPlaybackHandleState(h, sampleMeta);
-        const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
+        const hasBuffer = !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl);
+        logSongLookupDebug("handle-check", !!h, hasBuffer);
         window.__markSongPlaybackDebug(h ? "log" : "drop", {
           note: full,
           reason: h ? "play-handle-created" : "no-sample-handle",
           requestedNote: sampleRequest.requestedNote,
           resolvedSampleKey: resolvedPlaybackSampleKey,
           resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+          handleLookupKey,
+          preloadLookupKey,
           chosenPlaybackRoute: h && h.__liveRoute ? h.__liveRoute : chosenPlaybackRoute,
           routeDecisionReason: h ? routeDecisionReason : (hasBuffer ? "no-sample-handle" : "no-buffer"),
           isRawPianoPath,
@@ -1955,7 +1992,8 @@ async function playSample(note, octave, durMs, opts={}){
             ? window.__resolveLiveSampleHandle(resolvedHandle || h, playbackSampleKey, sampleMeta)
             : resolvedHandle;
           const handleState = __getSongPlaybackHandleState(resolved || resolvedHandle || h, sampleMeta);
-          const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
+          const hasBuffer = !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl);
+          logSongLookupDebug("readyPromise", !!resolved, hasBuffer);
           logSongPlaybackRoute("readyPromise", (resolved && resolved.__liveRoute) ? resolved.__liveRoute : chosenPlaybackRoute, {
             note: full,
             playbackSampleKey,
@@ -1969,6 +2007,8 @@ async function playSample(note, octave, durMs, opts={}){
               requestedNote: sampleRequest.requestedNote,
               resolvedSampleKey: resolvedPlaybackSampleKey,
               resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+              handleLookupKey,
+              preloadLookupKey,
               chosenPlaybackRoute: "sample / webaudio",
               routeDecisionReason: hasBuffer ? "no-sample-handle" : "no-buffer",
               isRawPianoPath,
@@ -1996,6 +2036,8 @@ async function playSample(note, octave, durMs, opts={}){
             requestedNote: sampleRequest.requestedNote,
             resolvedSampleKey: resolvedPlaybackSampleKey,
             resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
+            handleLookupKey,
+            preloadLookupKey,
             chosenPlaybackRoute: "sample / webaudio",
             routeDecisionReason: "sample-route-disabled",
             isRawPianoPath,
@@ -2003,7 +2045,7 @@ async function playSample(note, octave, durMs, opts={}){
             via,
             hasSampleHandle: false,
             handleState: "pending-handle-not-ready",
-            hasBuffer: !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey))),
+            hasBuffer: !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl),
             hasReadyPromise: true,
             route: "sample / webaudio",
             routeCandidate: "sample / webaudio",
@@ -5135,6 +5177,8 @@ return trSources[0]?.id || sources[0].id;
         lastScheduledAudioTime: null,
         lastCurrentAudioTime: null,
         lastHandleState: "",
+        lastHandleLookupKey: "",
+        lastPreloadLookupKey: "",
         lastHasBuffer: null,
         lastHasReadyPromise: false,
         terminalReason: "",
@@ -5226,6 +5270,8 @@ return trSources[0]?.id || sources[0].id;
       scheduledAudioTime: Number.isFinite(Number(detail && detail.scheduledAudioTime)) ? Number(Number(detail.scheduledAudioTime).toFixed(6)) : null,
       currentAudioTime: Number.isFinite(Number(detail && detail.currentAudioTime)) ? Number(Number(detail.currentAudioTime).toFixed(6)) : null,
       handleState: String(detail && detail.handleState || noteState.lastHandleState || ""),
+      handleLookupKey: String(detail && detail.handleLookupKey || noteState.lastHandleLookupKey || ""),
+      preloadLookupKey: String(detail && detail.preloadLookupKey || noteState.lastPreloadLookupKey || ""),
       hasBuffer: (detail && typeof detail.hasBuffer === "boolean") ? detail.hasBuffer : noteState.lastHasBuffer,
       hasReadyPromise: !!(detail && detail.hasReadyPromise),
       routeCandidate: String(detail && detail.routeCandidate || detail && detail.route || noteState.lastStartRoute || noteState.routeCandidate || ""),
@@ -5558,6 +5604,8 @@ return trSources[0]?.id || sources[0].id;
               hasReadyPromise: noteState.lastHasReadyPromise,
               scheduledAudioTime: noteState.lastScheduledAudioTime,
               currentAudioTime: noteState.lastCurrentAudioTime,
+              handleLookupKey: noteState.lastHandleLookupKey || "",
+              preloadLookupKey: noteState.lastPreloadLookupKey || "",
               plannedTimeSec: noteState.plannedTimeSec,
               routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
             });
@@ -5594,6 +5642,8 @@ return trSources[0]?.id || sources[0].id;
             playCallNoStartReason,
             playCallNoStartReasonCounts: Object.assign({}, noteState.playCallNoStartReasonCounts || {}),
             routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || ""),
+            handleLookupKey: String(noteState.lastHandleLookupKey || ""),
+            preloadLookupKey: String(noteState.lastPreloadLookupKey || ""),
             lastPlayCallNoStartDetail: lastPlayCallNoStartDetail ? Object.assign({}, lastPlayCallNoStartDetail) : null
           };
           if (!started && missingStartsSample.length < 20){
@@ -5609,6 +5659,8 @@ return trSources[0]?.id || sources[0].id;
               skipReason,
               skipReasonCounts: Object.assign({}, noteState.skipReasonCounts || {}),
               routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || ""),
+              handleLookupKey: String(lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.handleLookupKey || noteState.lastHandleLookupKey || ""),
+              preloadLookupKey: String(lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.preloadLookupKey || noteState.lastPreloadLookupKey || ""),
               handleState: String(lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.handleState || noteState.lastHandleState || ""),
               hasBuffer: (lastPlayCallNoStartDetail && typeof lastPlayCallNoStartDetail.hasBuffer === "boolean") ? lastPlayCallNoStartDetail.hasBuffer : noteState.lastHasBuffer,
               hasReadyPromise: !!(lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.hasReadyPromise || noteState.lastHasReadyPromise),
@@ -5767,6 +5819,8 @@ return trSources[0]?.id || sources[0].id;
         if (typeof payload.hasBuffer === "boolean") noteState.lastHasBuffer = payload.hasBuffer;
         if (payload.hasReadyPromise != null) noteState.lastHasReadyPromise = !!payload.hasReadyPromise;
         if (payload.handleState) noteState.lastHandleState = String(payload.handleState);
+        if (payload.handleLookupKey) noteState.lastHandleLookupKey = String(payload.handleLookupKey);
+        if (payload.preloadLookupKey) noteState.lastPreloadLookupKey = String(payload.preloadLookupKey);
       }
       if (key === "emit" && noteState){
         const summaryCounted = !noteState.emitSummaryCounted;
@@ -6666,6 +6720,36 @@ window.addEventListener("DOMContentLoaded", ()=>{
     };
   }
   window.__resolvePianoSampleRequest = window.__resolvePianoSampleRequest || __resolvePianoSampleRequest;
+
+  function __noteKeyFromResolvedUrl(url){
+    const raw = String(url || "").trim();
+    if (!raw) return "";
+    const m = /\/([A-G](?:s)?\d)\.(?:mp3|wav|ogg)(?:[?#].*)?$/i.exec(raw);
+    return m && m[1] ? String(m[1]) : "";
+  }
+
+  function __resolveSongSampleLookupKey(requestedNote, resolvedSampleKey, resolvedNoteUrl){
+    const requested = String(requestedNote || "").trim();
+    const resolved = String(resolvedSampleKey || "").trim();
+    const fromUrl = __noteKeyFromResolvedUrl(resolvedNoteUrl);
+    return resolved || fromUrl || requested;
+  }
+
+  function __getSongSampleBufferByLookupKey(lookupKey, resolvedNoteUrl){
+    const key = String(lookupKey || "").trim();
+    if (key){
+      if (window.__pianoBufCache && window.__pianoBufCache.has(key)) return window.__pianoBufCache.get(key);
+      const shared = __getSharedPianoBuffer(key);
+      if (shared) return shared;
+    }
+    const urlKey = __noteKeyFromResolvedUrl(resolvedNoteUrl);
+    if (urlKey && urlKey !== key){
+      if (window.__pianoBufCache && window.__pianoBufCache.has(urlKey)) return window.__pianoBufCache.get(urlKey);
+      const shared = __getSharedPianoBuffer(urlKey);
+      if (shared) return shared;
+    }
+    return null;
+  }
 
 
   window.__preloadPianoBuffer = window.__preloadPianoBuffer || function(note){
