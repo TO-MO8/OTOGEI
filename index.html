@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-029"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-030"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1739,6 +1739,12 @@ async function playSample(note, octave, durMs, opts={}){
     const via = opts.sourceType === "song" ? "song" : (opts.sourceType === "live" ? "live" : "question");
     const isSongPlayback = opts.sourceType === "song";
     const matchLiveInputSample = !!opts.matchLiveInputSample;
+    const sampleRequest = (typeof window.__resolvePianoSampleRequest === "function")
+      ? window.__resolvePianoSampleRequest(full)
+      : { requestedNote: full, resolvedSampleKey: full, resolvedNoteUrl: "" };
+    const playbackSampleKey = (isSongPlayback && sampleRequest && sampleRequest.resolvedSampleKey)
+      ? String(sampleRequest.resolvedSampleKey)
+      : full;
     const getSongCurrentAudioTime = () => {
       try{
         const ctx = window.audioCtx || (typeof window.ensureAudioCreated === "function" ? window.ensureAudioCreated() : null);
@@ -1749,9 +1755,12 @@ async function playSample(note, octave, durMs, opts={}){
     };
     if (isSongPlayback){
       try{
-        const hadBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
+        const hadBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
         window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
           note: full,
+          requestedNote: sampleRequest.requestedNote,
+          resolvedSampleKey: playbackSampleKey,
+          resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
           matchLiveInputSample,
           hadBuffer,
           songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
@@ -1761,12 +1770,15 @@ async function playSample(note, octave, durMs, opts={}){
         });
         if (!hadBuffer && typeof window.__preloadPianoBuffer === "function"){
           const preloadStartedAt = performance.now();
-          const preloadPromise = window.__preloadPianoBuffer(full);
+          const preloadPromise = window.__preloadPianoBuffer(playbackSampleKey);
           if (preloadPromise && typeof preloadPromise.then === "function"){
             preloadPromise.then(buf => {
               try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
                 note: full,
                 reason: buf ? "song-preload-resolved" : "song-preload-resolved-empty",
+                requestedNote: sampleRequest.requestedNote,
+                resolvedSampleKey: playbackSampleKey,
+                resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
                 songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
                 songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
@@ -1777,6 +1789,9 @@ async function playSample(note, octave, durMs, opts={}){
               try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
                 note: full,
                 reason: "song-preload-rejected",
+                requestedNote: sampleRequest.requestedNote,
+                resolvedSampleKey: playbackSampleKey,
+                resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
                 songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
                 songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
@@ -1815,6 +1830,9 @@ async function playSample(note, octave, durMs, opts={}){
     }); }catch(_){}
     try{ if (isSongPlayback && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("playCall", {
       note: full,
+      requestedNote: sampleRequest.requestedNote,
+      resolvedSampleKey: playbackSampleKey,
+      resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
       durMs: sampleMeta.durMs,
       autoStopFadeMs,
       matchLiveInputSample,
@@ -1824,18 +1842,25 @@ async function playSample(note, octave, durMs, opts={}){
       songEventId: sampleMeta.songEventId,
       songNoteIndex: sampleMeta.songNoteIndex
     }); }catch(_){}
-    const h = window.__playPianoSample(full, sampleMeta);
+    sampleMeta.requestedNote = sampleRequest.requestedNote;
+    sampleMeta.resolvedSampleKey = playbackSampleKey;
+    sampleMeta.resolvedNoteUrl = sampleRequest.resolvedNoteUrl;
+    const h = window.__playPianoSample(playbackSampleKey, sampleMeta);
     try{
       if (isSongPlayback && window.__markSongPlaybackDebug){
         const currentAudioTime = getSongCurrentAudioTime();
         const handleState = __getSongPlaybackHandleState(h, sampleMeta);
-        const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
+        const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
         window.__markSongPlaybackDebug(h ? "log" : "drop", {
           note: full,
           reason: h ? "play-handle-created" : "play-returned-null",
+          requestedNote: sampleRequest.requestedNote,
+          resolvedSampleKey: playbackSampleKey,
+          resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
           handleType: h && (h.type || typeof h) || null,
           handleState,
           hasBuffer,
+          hasReadyPromise: !!(h && h.__readyPromise && typeof h.__readyPromise.then === "function"),
           route: h && h.__liveRoute || "sample",
           routeCandidate: h && h.__liveRoute || "sample",
           scheduledAudioTime: sampleMeta.scheduledAudioTime,
@@ -1852,16 +1877,20 @@ async function playSample(note, octave, durMs, opts={}){
         try{
           const currentAudioTime = getSongCurrentAudioTime();
           const resolved = (typeof window.__resolveLiveSampleHandle === "function")
-            ? window.__resolveLiveSampleHandle(resolvedHandle || h, full, sampleMeta)
+            ? window.__resolveLiveSampleHandle(resolvedHandle || h, playbackSampleKey, sampleMeta)
             : resolvedHandle;
           const handleState = __getSongPlaybackHandleState(resolved || resolvedHandle || h, sampleMeta);
-          const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
+          const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
           if (!resolved || handleState === "pending-handle" || handleState === "pending-handle-not-ready"){
             window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
               note: full,
               reason: hasBuffer ? "route-aborted-before-start" : "pending-handle-not-ready",
+              requestedNote: sampleRequest.requestedNote,
+              resolvedSampleKey: playbackSampleKey,
+              resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
               handleState,
               hasBuffer,
+              hasReadyPromise: true,
               route: "sample / webaudio",
               routeCandidate: "sample / webaudio",
               scheduledAudioTime: sampleMeta.scheduledAudioTime,
@@ -1877,8 +1906,12 @@ async function playSample(note, octave, durMs, opts={}){
           window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
             note: full,
             reason: "preload-timeout",
+            requestedNote: sampleRequest.requestedNote,
+            resolvedSampleKey: playbackSampleKey,
+            resolvedNoteUrl: sampleRequest.resolvedNoteUrl,
             handleState: "pending-handle-not-ready",
-            hasBuffer: !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full))),
+            hasBuffer: !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey))),
+            hasReadyPromise: true,
             route: "sample / webaudio",
             routeCandidate: "sample / webaudio",
             scheduledAudioTime: sampleMeta.scheduledAudioTime,
@@ -4951,10 +4984,14 @@ return trSources[0]?.id || sources[0].id;
         playCallNoStartReason: "",
         playCallNoStartReasonCounts: Object.create(null),
         lastPlayCallNoStartDetail: null,
+        requestedNote: "",
+        resolvedSampleKey: "",
+        resolvedNoteUrl: "",
         lastScheduledAudioTime: null,
         lastCurrentAudioTime: null,
         lastHandleState: "",
         lastHasBuffer: null,
+        lastHasReadyPromise: false,
         terminalReason: "",
         lastStartRoute: "",
         lastStartPerfNow: null,
@@ -4988,6 +5025,7 @@ return trSources[0]?.id || sources[0].id;
     if (raw === "filtered-nonplayable") return raw;
     if (raw === "preload-not-ready" || raw === "song-preload-rejected") return "preload-not-ready";
     if (raw === "no-buffer-handle" || raw === "pending-handle-not-ready" || raw === "preload-timeout" || raw === "invalid-buffer" || raw === "source-start-threw" || raw === "scheduled-time-already-past" || raw === "token-stopped-after-playcall" || raw === "route-aborted-before-start") return "playcall-no-start";
+    if (raw === "buffer-missing-at-start" || raw === "buffer-start-exception" || raw === "html-play-exception") return "playcall-no-start";
     if (raw === "playcall-no-start" || raw === "play-returned-null" || raw === "primary-start-failed") return "playcall-no-start";
     if (raw === "token-stopped-before-start" || raw === "token-stopped" || raw.startsWith("allow-audio-emit-blocked")) return "token-stopped-before-start";
     if (raw === "skipped-before-playcall") return raw;
@@ -5036,11 +5074,15 @@ return trSources[0]?.id || sources[0].id;
     noteState.lastPlayCallNoStartDetail = {
       songEventId: noteState.songEventId || "",
       note: String(detail && detail.note || noteState.note || ""),
+      requestedNote: String(detail && detail.requestedNote || detail && detail.note || noteState.note || ""),
+      resolvedSampleKey: String(detail && detail.resolvedSampleKey || ""),
+      resolvedNoteUrl: String(detail && detail.resolvedNoteUrl || ""),
       plannedTimeSec: Number.isFinite(Number(detail && detail.plannedTimeSec)) ? Number(Number(detail.plannedTimeSec).toFixed(6)) : (Number.isFinite(Number(noteState.plannedTimeSec)) ? Number(Number(noteState.plannedTimeSec).toFixed(6)) : null),
       scheduledAudioTime: Number.isFinite(Number(detail && detail.scheduledAudioTime)) ? Number(Number(detail.scheduledAudioTime).toFixed(6)) : null,
       currentAudioTime: Number.isFinite(Number(detail && detail.currentAudioTime)) ? Number(Number(detail.currentAudioTime).toFixed(6)) : null,
       handleState: String(detail && detail.handleState || noteState.lastHandleState || ""),
       hasBuffer: (detail && typeof detail.hasBuffer === "boolean") ? detail.hasBuffer : noteState.lastHasBuffer,
+      hasReadyPromise: !!(detail && detail.hasReadyPromise),
       routeCandidate: String(detail && detail.routeCandidate || detail && detail.route || noteState.lastStartRoute || noteState.routeCandidate || ""),
       playCallNoStartReason: normalizedReason
     };
@@ -5358,7 +5400,24 @@ return trSources[0]?.id || sources[0].id;
           const skippedBeforePlayCall = (!started && Number(noteState.skippedBeforePlayCallCount || 0) > 0) ? 1 : 0;
           const terminalReason = __deriveSongPlaybackTerminalReason(noteState);
           const skipReason = String(noteState.lastSkipReason || noteState.primarySkipReason || "");
-          const playCallNoStartReason = String(noteState.playCallNoStartReason || "");
+          const lastPlayCallNoStartDetail = noteState.lastPlayCallNoStartDetail || null;
+          let playCallNoStartReason = String(noteState.playCallNoStartReason || lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.playCallNoStartReason || "");
+          if (!playCallNoStartReason && playCallCount > 0 && !started){
+            playCallNoStartReason = __normalizeSongPlayCallNoStartReason("playcall-no-start", {
+              note: noteState.note || "",
+              requestedNote: noteState.requestedNote || noteState.note || "",
+              resolvedSampleKey: noteState.resolvedSampleKey || "",
+              resolvedNoteUrl: noteState.resolvedNoteUrl || "",
+              handleState: noteState.lastHandleState || "",
+              hasBuffer: noteState.lastHasBuffer,
+              hasReadyPromise: noteState.lastHasReadyPromise,
+              scheduledAudioTime: noteState.lastScheduledAudioTime,
+              currentAudioTime: noteState.lastCurrentAudioTime,
+              plannedTimeSec: noteState.plannedTimeSec,
+              routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
+            });
+            if (playCallNoStartReason) noteState.playCallNoStartReason = playCallNoStartReason;
+          }
           noteState.terminalReason = terminalReason;
           if (started) primaryStartedEventCount += 1;
           if (started && noteState.secondaryDropAfterPrimarySeen) secondaryDropAfterPrimaryCount += 1;
@@ -5381,23 +5440,36 @@ return trSources[0]?.id || sources[0].id;
             emittedButNeverPlayCalledCount: emittedButNeverPlayCalled,
             playCalledButNeverStartedCount: playCalledButNeverStarted,
             skippedBeforePlayCallCount: skippedBeforePlayCall,
+            requestedNote: String(noteState.requestedNote || noteState.note || ""),
+            resolvedSampleKey: String(noteState.resolvedSampleKey || ""),
+            resolvedNoteUrl: String(noteState.resolvedNoteUrl || ""),
             skipReason,
             skipReasonCounts: Object.assign({}, noteState.skipReasonCounts || {}),
             terminalReason,
             playCallNoStartReason,
             playCallNoStartReasonCounts: Object.assign({}, noteState.playCallNoStartReasonCounts || {}),
-            routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
+            routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || ""),
+            lastPlayCallNoStartDetail: lastPlayCallNoStartDetail ? Object.assign({}, lastPlayCallNoStartDetail) : null
           };
           if (!started && missingStartsSample.length < 20){
             missingStartsSample.push({
               songEventId: eventKey,
               note: String(noteState.note || ""),
+              requestedNote: String(noteState.requestedNote || noteState.note || ""),
+              resolvedSampleKey: String(noteState.resolvedSampleKey || ""),
+              resolvedNoteUrl: String(noteState.resolvedNoteUrl || ""),
               plannedTimeSec: Number.isFinite(Number(noteState.plannedTimeSec)) ? Number(Number(noteState.plannedTimeSec).toFixed(6)) : null,
               terminalReason,
               playCallNoStartReason,
               skipReason,
               skipReasonCounts: Object.assign({}, noteState.skipReasonCounts || {}),
-              routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
+              routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || ""),
+              handleState: String(lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.handleState || noteState.lastHandleState || ""),
+              hasBuffer: (lastPlayCallNoStartDetail && typeof lastPlayCallNoStartDetail.hasBuffer === "boolean") ? lastPlayCallNoStartDetail.hasBuffer : noteState.lastHasBuffer,
+              hasReadyPromise: !!(lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.hasReadyPromise || noteState.lastHasReadyPromise),
+              scheduledAudioTime: Number.isFinite(Number(lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.scheduledAudioTime)) ? Number(lastPlayCallNoStartDetail.scheduledAudioTime) : (Number.isFinite(Number(noteState.lastScheduledAudioTime)) ? Number(Number(noteState.lastScheduledAudioTime).toFixed(6)) : null),
+              currentAudioTime: Number.isFinite(Number(lastPlayCallNoStartDetail && lastPlayCallNoStartDetail.currentAudioTime)) ? Number(lastPlayCallNoStartDetail.currentAudioTime) : (Number.isFinite(Number(noteState.lastCurrentAudioTime)) ? Number(Number(noteState.lastCurrentAudioTime).toFixed(6)) : null),
+              lastPlayCallNoStartDetail: lastPlayCallNoStartDetail ? Object.assign({}, lastPlayCallNoStartDetail) : null
             });
           }
         });
@@ -5530,7 +5602,16 @@ return trSources[0]?.id || sources[0].id;
         payload.priorStarted = !!(noteState && Number(noteState.startedCount || 0) > 0);
       }
       if (noteState){
-        if (payload.note != null && payload.note !== "") noteState.note = String(payload.note);
+        if (payload.requestedNote != null && payload.requestedNote !== ""){
+          noteState.requestedNote = String(payload.requestedNote);
+          noteState.note = String(payload.requestedNote);
+        }else if (payload.note != null && payload.note !== "" && !noteState.note){
+          noteState.note = String(payload.note);
+        }
+        else if (!noteState.note && payload.note != null && payload.note !== "") noteState.note = String(payload.note);
+        if (!noteState.requestedNote && payload.note != null && payload.note !== "") noteState.requestedNote = String(payload.note);
+        if (payload.resolvedSampleKey) noteState.resolvedSampleKey = String(payload.resolvedSampleKey);
+        if (payload.resolvedNoteUrl) noteState.resolvedNoteUrl = String(payload.resolvedNoteUrl);
         if (Number.isFinite(Number(payload.plannedTimeSec))) noteState.plannedTimeSec = Number(payload.plannedTimeSec);
         if (payload.routeCandidate) noteState.routeCandidate = String(payload.routeCandidate);
         if (payload.route) noteState.routeCandidate = String(payload.route);
@@ -5539,6 +5620,7 @@ return trSources[0]?.id || sources[0].id;
         if (Number.isFinite(Number(payload.scheduledAudioTime))) noteState.lastScheduledAudioTime = Number(payload.scheduledAudioTime);
         if (Number.isFinite(Number(payload.currentAudioTime))) noteState.lastCurrentAudioTime = Number(payload.currentAudioTime);
         if (typeof payload.hasBuffer === "boolean") noteState.lastHasBuffer = payload.hasBuffer;
+        if (payload.hasReadyPromise != null) noteState.lastHasReadyPromise = !!payload.hasReadyPromise;
         if (payload.handleState) noteState.lastHandleState = String(payload.handleState);
       }
       if (key === "emit" && noteState){
@@ -6181,8 +6263,11 @@ useBtn.addEventListener("click", () => {
     try{
       if (!window.__allowAudioEmit || !window.__allowAudioEmit(note, meta)){
         try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
-          note,
+          note: meta && meta.requestedNote ? meta.requestedNote : note,
           reason: "allow-audio-emit-blocked-html",
+          requestedNote: meta && meta.requestedNote ? meta.requestedNote : note,
+          resolvedSampleKey: meta && meta.resolvedSampleKey ? meta.resolvedSampleKey : note,
+          resolvedNoteUrl: meta && meta.resolvedNoteUrl ? meta.resolvedNoteUrl : __noteUrl(note),
           route: "sample / html audio",
           songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
           songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
@@ -6212,8 +6297,11 @@ useBtn.addEventListener("click", () => {
         console.warn("[sample play error]", err);
       }
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
-        note,
+        note: meta && meta.requestedNote ? meta.requestedNote : note,
         route: "sample / html audio",
+        requestedNote: meta && meta.requestedNote ? meta.requestedNote : note,
+        resolvedSampleKey: meta && meta.resolvedSampleKey ? meta.resolvedSampleKey : note,
+        resolvedNoteUrl: meta && meta.resolvedNoteUrl ? meta.resolvedNoteUrl : url,
         plannedTimeSec: Number.isFinite(Number(meta && meta.plannedTimeSec)) ? Number(meta.plannedTimeSec) : null,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
         songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
@@ -6228,8 +6316,11 @@ useBtn.addEventListener("click", () => {
     }catch(e){
       console.warn("[sample play error]", e);
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
-        note,
+        note: meta && meta.requestedNote ? meta.requestedNote : note,
         reason: "html-play-exception",
+        requestedNote: meta && meta.requestedNote ? meta.requestedNote : note,
+        resolvedSampleKey: meta && meta.resolvedSampleKey ? meta.resolvedSampleKey : note,
+        resolvedNoteUrl: meta && meta.resolvedNoteUrl ? meta.resolvedNoteUrl : url,
         route: "sample / html audio",
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
         songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
@@ -6358,6 +6449,31 @@ window.addEventListener("DOMContentLoaded", ()=>{
   return `assets/piano/${n}.mp3`;
 }
 
+  function __resolvePianoSampleRequest(note){
+    const requestedNote = String(note || "").trim().replace(/♯/g, "#");
+    let normalized = requestedNote.replace(/^Db(\d)$/,"Cs$1")
+      .replace(/^Eb(\d)$/,"Ds$1")
+      .replace(/^Gb(\d)$/,"Fs$1")
+      .replace(/^Ab(\d)$/,"Gs$1")
+      .replace(/^Bb(\d)$/,"As$1")
+      .replace(/([A-G])#(\d)/, "$1s$2");
+    const m = /^([A-G])([s]?)(-?\d+)$/.exec(normalized);
+    if (m){
+      const L = m[1];
+      const acc = m[2] || "";
+      let oct = parseInt(m[3], 10);
+      if (oct < SAMPLE_OCT_MIN) oct = SAMPLE_OCT_MIN;
+      if (oct > SAMPLE_OCT_MAX) oct = SAMPLE_OCT_MAX;
+      normalized = `${L}${acc}${oct}`;
+    }
+    return {
+      requestedNote,
+      resolvedSampleKey: normalized,
+      resolvedNoteUrl: __noteUrl(normalized)
+    };
+  }
+  window.__resolvePianoSampleRequest = window.__resolvePianoSampleRequest || __resolvePianoSampleRequest;
+
 
   window.__preloadPianoBuffer = window.__preloadPianoBuffer || function(note){
     try{
@@ -6410,8 +6526,11 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const buf = window.__pianoBufCache.get(note) || __getSharedPianoBuffer(note);
     if (!buf){
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
-        note,
+        note: meta && meta.requestedNote ? meta.requestedNote : note,
         reason: "buffer-missing-at-start",
+        requestedNote: meta && meta.requestedNote ? meta.requestedNote : note,
+        resolvedSampleKey: meta && meta.resolvedSampleKey ? meta.resolvedSampleKey : note,
+        resolvedNoteUrl: meta && meta.resolvedNoteUrl ? meta.resolvedNoteUrl : __noteUrl(note),
         route: "sample / webaudio",
         routeCandidate: "sample / webaudio",
         scheduledAudioTime: Number.isFinite(Number(meta && meta.scheduledAudioTime)) ? Number(meta.scheduledAudioTime) : null,
@@ -6425,8 +6544,11 @@ window.addEventListener("DOMContentLoaded", ()=>{
     }
     if (!buf.duration || !Number.isFinite(Number(buf.duration)) || Number(buf.duration) <= 0){
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
-        note,
+        note: meta && meta.requestedNote ? meta.requestedNote : note,
         reason: "invalid-buffer",
+        requestedNote: meta && meta.requestedNote ? meta.requestedNote : note,
+        resolvedSampleKey: meta && meta.resolvedSampleKey ? meta.resolvedSampleKey : note,
+        resolvedNoteUrl: meta && meta.resolvedNoteUrl ? meta.resolvedNoteUrl : __noteUrl(note),
         route: "sample / webaudio",
         routeCandidate: "sample / webaudio",
         scheduledAudioTime: Number.isFinite(Number(meta && meta.scheduledAudioTime)) ? Number(meta.scheduledAudioTime) : null,
@@ -6479,8 +6601,11 @@ window.addEventListener("DOMContentLoaded", ()=>{
 
       src.connect(g); g.connect(ctx.destination);
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("log", {
-        note,
+        note: meta && meta.requestedNote ? meta.requestedNote : note,
         reason: scheduledTimeAlreadyPast ? "scheduled-time-already-past" : "start-attempt",
+        requestedNote: meta && meta.requestedNote ? meta.requestedNote : note,
+        resolvedSampleKey: meta && meta.resolvedSampleKey ? meta.resolvedSampleKey : note,
+        resolvedNoteUrl: meta && meta.resolvedNoteUrl ? meta.resolvedNoteUrl : __noteUrl(note),
         route: "sample / webaudio",
         routeCandidate: "sample / webaudio",
         scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
@@ -6493,8 +6618,11 @@ window.addEventListener("DOMContentLoaded", ()=>{
       }); }catch(_){ }
       src.start(startAt, trimSec);
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
-        note,
+        note: meta && meta.requestedNote ? meta.requestedNote : note,
         route: "sample / webaudio",
+        requestedNote: meta && meta.requestedNote ? meta.requestedNote : note,
+        resolvedSampleKey: meta && meta.resolvedSampleKey ? meta.resolvedSampleKey : note,
+        resolvedNoteUrl: meta && meta.resolvedNoteUrl ? meta.resolvedNoteUrl : __noteUrl(note),
         trimMs,
         attackMs,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
@@ -6555,8 +6683,11 @@ window.addEventListener("DOMContentLoaded", ()=>{
       return voice;
     }catch(e){
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
-        note,
+        note: meta && meta.requestedNote ? meta.requestedNote : note,
         reason: scheduledTimeAlreadyPast ? "scheduled-time-already-past" : "buffer-start-exception",
+        requestedNote: meta && meta.requestedNote ? meta.requestedNote : note,
+        resolvedSampleKey: meta && meta.resolvedSampleKey ? meta.resolvedSampleKey : note,
+        resolvedNoteUrl: meta && meta.resolvedNoteUrl ? meta.resolvedNoteUrl : __noteUrl(note),
         route: "sample / webaudio",
         routeCandidate: "sample / webaudio",
         scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
