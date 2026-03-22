@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-035"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-036"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -779,13 +779,31 @@ window.__logSamplePlaybackCompare = window.__logSamplePlaybackCompare || functio
       : 0;
     const heldSamples = window.__heldSamples;
     const pendingHeldSamples = window.__pendingHeldSamples;
+    const requestedNote = String((meta && meta.requestedNote) || (meta && meta.note) || key || "").trim();
+    const resolvedSampleKey = String((meta && meta.resolvedSampleKey) || key || "").trim();
+    const resolvedNoteUrl = String((meta && meta.resolvedNoteUrl) || (resolvedSampleKey && typeof window.__noteUrl === "function" ? window.__noteUrl(resolvedSampleKey) : "") || "").trim();
+    const chosenPlaybackRoute = info.route || (info.handle && info.handle.__liveRoute) || (meta && meta.chosenPlaybackRoute) || null;
+    const routeDecisionReason = info.reason || (meta && meta.routeDecisionReason) || null;
+    const usesButtonLikePianoPath = chosenPlaybackRoute === "sample / webaudio";
+    const usesSongSchedulingOnly = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
+    const hasBuffer = !!(resolvedSampleKey && ((window.__pianoBufCache && window.__pianoBufCache.has(resolvedSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(resolvedSampleKey))));
+    const handleCandidate = info.handle || null;
     const payload = {
       phase: String(phase || "unknown"),
       context: window.__getSamplePlaybackCompareContext(meta),
       note: key || null,
+      requestedNote: requestedNote || null,
+      chosenPlaybackRoute,
+      routeDecisionReason,
       via: meta && meta.via || null,
       sourceType: meta && meta.sourceType || null,
       route: info.route || (info.handle && info.handle.__liveRoute) || null,
+      usesButtonLikePianoPath,
+      usesSongSchedulingOnly,
+      sampleKey: resolvedSampleKey || null,
+      sampleUrl: resolvedNoteUrl || null,
+      hasBuffer,
+      hasSampleHandle: !!handleCandidate,
       gainMultiplier: Number.isFinite(Number(info.gainMultiplier)) ? Number(info.gainMultiplier) : null,
       trimMs: Number.isFinite(Number(info.trimMs)) ? Number(info.trimMs) : null,
       attackMs: Number.isFinite(Number(info.attackMs)) ? Number(info.attackMs) : null,
@@ -1755,7 +1773,7 @@ async function playSample(note, octave, durMs, opts={}){
     const resolvedPlaybackSampleKey = (sampleRequest && sampleRequest.resolvedSampleKey)
       ? String(sampleRequest.resolvedSampleKey)
       : full;
-    const playbackSampleKey = full;
+    const playbackSampleKey = isSongPlayback ? resolvedPlaybackSampleKey : full;
     const handleLookupKey = isSongPlayback
       ? __resolveSongSampleLookupKey(sampleRequest.requestedNote, resolvedPlaybackSampleKey, sampleRequest.resolvedNoteUrl)
       : full;
@@ -1780,6 +1798,8 @@ async function playSample(note, octave, durMs, opts={}){
     const chosenPlaybackRoute = isSongPlayback ? "sample / requested-note" : "sample";
     const routeDecisionReason = String((opts && opts.routeDecisionReason) || (isSongPlayback ? (soundMode === "sample" ? "sample-selected" : "song-route-overridden") : "sample-selected"));
     const isRawPianoPath = !!isSongPlayback;
+    const usesButtonLikePianoPath = true;
+    const usesSongSchedulingOnly = !!isSongPlayback;
     const logSongPlaybackRoute = (stage, routeOverride, extra) => {
       if (!isSongPlayback) return;
       try{
@@ -1791,6 +1811,8 @@ async function playSample(note, octave, durMs, opts={}){
           chosenPlaybackRoute: routeOverride || chosenPlaybackRoute,
           routeDecisionReason,
           isRawPianoPath,
+          usesButtonLikePianoPath,
+          usesSongSchedulingOnly,
           hasSampleHandle: false,
           hasBuffer: getHasSongSampleBuffer(),
           handleLookupKey,
@@ -1919,6 +1941,8 @@ async function playSample(note, octave, durMs, opts={}){
       chosenPlaybackRoute,
       routeDecisionReason,
       isRawPianoPath,
+      usesButtonLikePianoPath,
+      usesSongSchedulingOnly,
       hasSampleHandle: false,
       sourceType: opts.sourceType || null,
       via,
@@ -2714,7 +2738,7 @@ async function playNoteOut(note, durMs, opts={}){
       ? window.__resolvePianoSampleRequest(emitNote)
       : { requestedNote: emitNote, resolvedSampleKey: emitNote, resolvedNoteUrl: (typeof window.__noteUrl === "function" ? window.__noteUrl(emitNote) : "") };
     const songResolvedSampleKey = songSampleRequest && songSampleRequest.resolvedSampleKey ? String(songSampleRequest.resolvedSampleKey) : emitNote;
-    const getSongHasBuffer = () => !!(isSongPlayback && ((window.__pianoBufCache && window.__pianoBufCache.has(emitNote)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(emitNote))));
+    const getSongHasBuffer = () => !!(isSongPlayback && ((window.__pianoBufCache && window.__pianoBufCache.has(songResolvedSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(songResolvedSampleKey))));
     const logSongRouteDecision = (chosenPlaybackRoute, routeDecisionReason, extra={}) => {
       if (!isSongPlayback) return;
       const payload = Object.assign({
@@ -2725,6 +2749,8 @@ async function playNoteOut(note, durMs, opts={}){
         chosenPlaybackRoute,
         routeDecisionReason,
         isRawPianoPath: chosenPlaybackRoute.indexOf("sample") === 0,
+        usesButtonLikePianoPath: chosenPlaybackRoute === "sample / webaudio" || chosenPlaybackRoute === "sample / requested-note",
+        usesSongSchedulingOnly: true,
         hasSampleHandle: false,
         hasBuffer: getSongHasBuffer(),
         sourceType: opts.sourceType || null,
@@ -6553,6 +6579,15 @@ useBtn.addEventListener("click", () => {
         songVolume: gainInfo.songVolume,
         finalGainAfterSongVolume: appliedGain
       }); }catch(_){}
+      try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("handle-ready", note, meta, {
+        route: "sample / html audio",
+        gainMultiplier: appliedGain,
+        scheduledDurMs: meta && meta.durMs,
+        autoStopFadeMs: meta && meta.autoStopFadeMs,
+        htmlVolume: appliedGain,
+        samplePeak: window.__getLiveInputSamplePeakValue && window.__getLiveInputSamplePeakValue(note),
+        handle
+      }); }catch(_){ }
       try{ console.log("[live sample] __playPianoSample html", { note, url }); }catch(e){}
       return handle;
     }catch(e){
@@ -6933,6 +6968,16 @@ window.addEventListener("DOMContentLoaded", ()=>{
       voice.type = "buffer";
       voice.__liveRoute = "sample / webaudio";
       voice.__scheduledStartAudioTime = startAt;
+      try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("handle-ready", note, meta, {
+        route: "sample / webaudio",
+        gainMultiplier: gainInfo.finalGainAfterSongVolume,
+        trimMs,
+        attackMs,
+        scheduledDurMs: meta && meta.durMs,
+        autoStopFadeMs: meta && meta.autoStopFadeMs,
+        samplePeak: window.__getLiveInputSamplePeakValue && window.__getLiveInputSamplePeakValue(note),
+        handle: voice
+      }); }catch(_){ }
       try{ window.__captureLiveInputDebugMeter && window.__captureLiveInputDebugMeter(note, meta, { route:"sample / webaudio", gainMultiplier: gainInfo.finalGainAfterSongVolume, handle: voice }); }catch(_){ }
       __ensureLiveVoiceMeta(voice, Object.assign({}, meta, { note, sample: note }));
       window.__activeNoteVoices = window.__activeNoteVoices || new Map();
@@ -7053,7 +7098,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
         .then(buf => {
           let resolved = null;
           if (buf) resolved = __playBufferNow(note, meta);
-          if (!resolved){
+          if (!resolved && !isScheduledSong){
             const htmlResolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
             resolved = __wrapLiveHtmlAudioHandle(htmlResolved, note, meta, {
               __wrappedFromHtmlFallback: true
