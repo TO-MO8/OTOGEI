@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-039"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-040"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2783,6 +2783,33 @@ async function playNoteOut(note, durMs, opts={}){
         reason: "allow-audio-emit-blocked-playNoteOut"
       }); }catch(_){}
       return true;
+    }
+
+    if (isSongPlayback){
+      let sampleRouteReason = (soundMode === "sample") ? "sample-selected" : "song-route-overridden";
+      let sampleRouteOk = false;
+      try{
+        if (location && location.protocol === "file:") throw new Error("file protocol blocks sample fetch");
+        await ensureSampleReady();
+        sampleRouteOk = await playSample(noteName, useOct, durMs, Object.assign({}, opts, {
+          via: songPlaybackVia,
+          routeDecisionReason: sampleRouteReason
+        }));
+      }catch(e){
+        sampleRouteOk = false;
+        sampleRouteReason = "sample-route-disabled";
+      }
+      if (sampleRouteOk) return true;
+      if (sampleRouteReason !== "sample-route-disabled"){
+        sampleRouteReason = getSongHasBuffer() ? "no-sample-handle" : "no-buffer";
+      }
+      logSongRouteDecision(
+        soundMode === "gmpiano" ? "gmpiano"
+          : soundMode === "synth" ? "synth"
+          : soundMode === "beep" ? "beep"
+          : "fallback",
+        sampleRouteReason
+      );
     }
 
     // Built-in piano (embedded GM-ish sample). If not ready, fall back to synth/beep.
@@ -6272,7 +6299,7 @@ async function __playAllFromTrack(runId, songToken){
           requestedNote: String(songSampleRequest && songSampleRequest.requestedNote || playNote || ""),
           resolvedSampleKey: String(songSampleRequest && songSampleRequest.resolvedSampleKey || playNote || ""),
           resolvedNoteUrl: String(songSampleRequest && songSampleRequest.resolvedNoteUrl || ((typeof window.__noteUrl === "function") ? window.__noteUrl(playNote) : "")),
-          chosenPlaybackRoute: "sample / webaudio",
+          chosenPlaybackRoute: "sample / requested-note",
           routeDecisionReason: (soundMode === "sample") ? "sample-selected" : "song-route-overridden",
           sourceType: "song",
           via: "song",
@@ -6302,7 +6329,7 @@ async function __playAllFromTrack(runId, songToken){
         requestedNote: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.requestedNote || lastNoteState && lastNoteState.requestedNote || ""),
         resolvedSampleKey: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.resolvedSampleKey || lastNoteState && lastNoteState.resolvedSampleKey || ""),
         resolvedNoteUrl: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.resolvedNoteUrl || lastNoteState && lastNoteState.resolvedNoteUrl || ""),
-        chosenPlaybackRoute: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.chosenPlaybackRoute || lastNoteState && lastNoteState.lastStartRoute || lastNoteState && lastNoteState.routeCandidate || "sample / webaudio"),
+        chosenPlaybackRoute: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.chosenPlaybackRoute || lastNoteState && lastNoteState.lastStartRoute || lastNoteState && lastNoteState.routeCandidate || "sample / requested-note"),
         routeDecisionReason: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.routeDecisionReason || "song-route-exception"),
         sourceType: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.sourceType || "song"),
         via: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.via || "song"),
@@ -7054,7 +7081,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
   window.__playPianoSample = function(note, meta){
     try{ window.__logPlayPianoSampleEntry("__playPianoSample enter", note, meta); }catch(_){ }
     const isLiveInput = __safeIsLiveInputSampleMeta(meta);
-    const shouldWaitForBuffer = isLiveInput;
+    const isScheduledSong = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
+    const shouldWaitForBuffer = isLiveInput || isScheduledSong;
     // If buffer ready, this is the fastest path
     const h = __playBufferNow(note, meta);
     if (h){
