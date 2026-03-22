@@ -525,7 +525,7 @@ window.sampleBufCache = window.sampleCache;
 
 
 // baseline固定: 現在の「一曲再生で生音が鳴る状態」を正として扱い、song runtime / sample route / lookup / preload / fallback は変更しない
-const __APP_BUILD_ID__ = "BUILD 20260322-043-song-diagnostics-runtime-rollback"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-044-song-runtime-back-to-baseline"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -3998,54 +3998,6 @@ function __midiToNoteName(midi){
   const octave = Math.floor(midi/12)-1; // MIDI: C4=60
   return { n:names[pc], o:octave };
 }
-function __isMidiPercussionChannel(ch){
-  return Number(ch) === 9; // MIDI Ch10 (1-based)
-}
-function __trackNameLooksDrumLike(name){
-  const s = String(name || "").trim();
-  if (!s) return false;
-  return /(drum|drums|perc|percussion|kit|kick|snare|hat|hihat|tom|cymbal|clap|conga|bongo|timbale|shaker|tamb)/i.test(s);
-}
-function __isDrumLikeMidiEvent(note, ch, trackName){
-  if (__isMidiPercussionChannel(ch)) return true;
-  if (__trackNameLooksDrumLike(trackName)) return true;
-  const midi = Number(note);
-  return Number.isFinite(midi) && midi >= 35 && midi <= 81;
-}
-function __getSongEventDiagnosticMeta(parsed, sourceId, noteObj){
-  const meta = {
-    trackIndex: null,
-    trackName: "",
-    midiChannel: null,
-    originalMidiNote: null,
-    isPercussion: false,
-    isDrumLike: false
-  };
-  const src = String(sourceId || "");
-  const note = (noteObj && typeof noteObj === "object") ? noteObj : null;
-  if (note && note.n != null && note.o != null){
-    try{ meta.originalMidiNote = midiFromNote(String(note.n).replace(/s/g,'#'), parseInt(note.o,10)); }catch(_e){}
-  }
-  if (src.startsWith("track:")) {
-    const idx = parseInt(src.slice(6), 10);
-    if (Number.isFinite(idx)){
-      meta.trackIndex = idx;
-      const tr = parsed && parsed.tracks ? parsed.tracks.find(t => t.index === idx) : null;
-      if (tr && tr.name != null) meta.trackName = String(tr.name || "");
-    }
-  } else if (src.startsWith("ch:")) {
-    const ch = parseInt(src.slice(3), 10);
-    if (Number.isFinite(ch)) meta.midiChannel = ch;
-    const base = (parsed && parsed.tracks && parsed.tracks.length) ? parsed.tracks[0] : null;
-    if (base){
-      meta.trackIndex = Number.isFinite(Number(base.index)) ? Number(base.index) : null;
-      meta.trackName = String(base.name || "");
-    }
-  }
-  meta.isPercussion = __isMidiPercussionChannel(meta.midiChannel);
-  meta.isDrumLike = __isDrumLikeMidiEvent(meta.originalMidiNote, meta.midiChannel, meta.trackName);
-  return meta;
-}
 
 /**
  * Minimal SMF parser:
@@ -4743,12 +4695,6 @@ return trSources[0]?.id || sources[0].id;
         usesSongSchedulingOnly: false,
         plannedTimeSec: null,
         startedRoute: "",
-        trackIndex: null,
-        trackName: "",
-        midiChannel: null,
-        originalMidiNote: null,
-        isPercussion: false,
-        isDrumLike: false,
         phaseCounts: Object.create(null)
       });
       event.phaseCounts[kind] = Number(event.phaseCounts[kind] || 0) + 1;
@@ -4761,12 +4707,6 @@ return trSources[0]?.id || sources[0].id;
       if (detail && detail.usesButtonLikePianoPath != null) event.usesButtonLikePianoPath = !!detail.usesButtonLikePianoPath;
       if (detail && detail.usesSongSchedulingOnly != null) event.usesSongSchedulingOnly = !!detail.usesSongSchedulingOnly;
       if (detail && Number.isFinite(Number(detail.plannedTimeSec))) event.plannedTimeSec = Number(Number(detail.plannedTimeSec).toFixed(6));
-      if (detail && detail.trackIndex != null) event.trackIndex = Number.isFinite(Number(detail.trackIndex)) ? Number(detail.trackIndex) : null;
-      if (detail && detail.trackName != null) event.trackName = String(detail.trackName);
-      if (detail && detail.midiChannel != null) event.midiChannel = Number.isFinite(Number(detail.midiChannel)) ? Number(detail.midiChannel) : null;
-      if (detail && detail.originalMidiNote != null) event.originalMidiNote = Number.isFinite(Number(detail.originalMidiNote)) ? Number(detail.originalMidiNote) : null;
-      if (detail && Object.prototype.hasOwnProperty.call(detail, "isPercussion")) event.isPercussion = !!detail.isPercussion;
-      if (detail && Object.prototype.hasOwnProperty.call(detail, "isDrumLike")) event.isDrumLike = !!detail.isDrumLike;
       if (kind === "start") event.startedRoute = String(detail && (detail.route || detail.chosenPlaybackRoute) || "");
     }
     if (kind === "emit") state.emittedCount += 1;
@@ -4801,28 +4741,8 @@ return trSources[0]?.id || sources[0].id;
           }, {})
         : {}
     };
-    summary.suspiciousPercussionCandidates = Array.isArray(state.songEventIdOrder)
-      ? state.songEventIdOrder
-          .map(id => state.events[id])
-          .filter(ev => ev && [36,41,42,44,46].includes(Number(ev.originalMidiNote)))
-          .map(ev => ({
-            songEventId: ev.songEventId || "",
-            note: ev.note || "",
-            originalMidiNote: ev.originalMidiNote,
-            midiChannel: ev.midiChannel,
-            trackIndex: ev.trackIndex,
-            trackName: ev.trackName || "",
-            isPercussion: !!ev.isPercussion,
-            isDrumLike: !!ev.isDrumLike,
-            chosenPlaybackRoute: ev.chosenPlaybackRoute || "",
-            startedRoute: ev.startedRoute || ""
-          }))
-      : [];
     console.log("[song timing summary]", summary);
     console.log("[song route summary]", Object.assign({}, state.routeStats));
-    if (summary.suspiciousPercussionCandidates.length){
-      console.log("[song percussion candidates]", summary.suspiciousPercussionCandidates);
-    }
     return summary;
   }
   try{
@@ -5075,21 +4995,8 @@ function __registerTrackAsSong(sourceId){
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
         const plannedTimeSec = Math.max(0, __ticksToMs(0, nn.__tick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond) / 1000);
         const songEventId = `${runId}:${songToken}:${sourceId}:${i}`;
-        const songDiagMeta = __getSongEventDiagnosticMeta(__parsed, sourceId, noteObj);
-        try{ __recordSongDiag("prepare", Object.assign({
-          songEventId,
-          songNoteIndex:i,
-          note:`${noteObj && noteObj.n != null ? noteObj.n : "C"}${noteObj && noteObj.o != null ? noteObj.o : 4}`,
-          plannedTimeSec
-        }, songDiagMeta)); }catch(_e){}
         if (runId !== __getPreviewRunId()) break;
-        await window.playNoteOut(playNote, dur, {
-          sourceType:"song",
-          token:songToken,
-          songEventId,
-          songNoteIndex:i,
-          plannedTimeSec
-        }); // note length (sound)
+        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, songEventId, songNoteIndex:i, plannedTimeSec }); // note length (sound)
         if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         const stillActive = await __songPlaybackSleep(runId, gapMs); // spacing (rhythm)
@@ -5158,21 +5065,8 @@ async function __playAllFromTrack(runId, songToken){
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
         const plannedTimeSec = Math.max(0, __ticksToMs(0, nn.__tick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond) / 1000);
         const songEventId = `${runId}:${songToken}:${sourceId}:${i}`;
-        const songDiagMeta = __getSongEventDiagnosticMeta(__parsed, sourceId, noteObj);
-        try{ __recordSongDiag("prepare", Object.assign({
-          songEventId,
-          songNoteIndex:i,
-          note:`${noteObj && noteObj.n != null ? noteObj.n : "C"}${noteObj && noteObj.o != null ? noteObj.o : 4}`,
-          plannedTimeSec
-        }, songDiagMeta)); }catch(_e){}
         if (runId !== __getPreviewRunId()) break;
-        await window.playNoteOut(playNote, dur, {
-          sourceType:"song",
-          token:songToken,
-          songEventId,
-          songNoteIndex:i,
-          plannedTimeSec
-        });
+        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, songEventId, songNoteIndex:i, plannedTimeSec });
         if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         const stillActive = await __songPlaybackSleep(runId, gapMs);
