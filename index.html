@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-036"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-037"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1773,7 +1773,7 @@ async function playSample(note, octave, durMs, opts={}){
     const resolvedPlaybackSampleKey = (sampleRequest && sampleRequest.resolvedSampleKey)
       ? String(sampleRequest.resolvedSampleKey)
       : full;
-    const playbackSampleKey = isSongPlayback ? resolvedPlaybackSampleKey : full;
+    const playbackSampleKey = full;
     const handleLookupKey = isSongPlayback
       ? __resolveSongSampleLookupKey(sampleRequest.requestedNote, resolvedPlaybackSampleKey, sampleRequest.resolvedNoteUrl)
       : full;
@@ -1795,7 +1795,7 @@ async function playSample(note, octave, durMs, opts={}){
         });
       }catch(_e){}
     };
-    const chosenPlaybackRoute = isSongPlayback ? "sample / requested-note" : "sample";
+    const chosenPlaybackRoute = isSongPlayback ? "sample / webaudio" : "sample";
     const routeDecisionReason = String((opts && opts.routeDecisionReason) || (isSongPlayback ? (soundMode === "sample" ? "sample-selected" : "song-route-overridden") : "sample-selected"));
     const isRawPianoPath = !!isSongPlayback;
     const usesButtonLikePianoPath = true;
@@ -6291,7 +6291,7 @@ async function __playAllFromTrack(runId, songToken){
           requestedNote: String(songSampleRequest && songSampleRequest.requestedNote || playNote || ""),
           resolvedSampleKey: String(songSampleRequest && songSampleRequest.resolvedSampleKey || playNote || ""),
           resolvedNoteUrl: String(songSampleRequest && songSampleRequest.resolvedNoteUrl || ((typeof window.__noteUrl === "function") ? window.__noteUrl(playNote) : "")),
-          chosenPlaybackRoute: "sample / requested-note",
+          chosenPlaybackRoute: "sample / webaudio",
           routeDecisionReason: (soundMode === "sample") ? "sample-selected" : "song-route-overridden",
           sourceType: "song",
           via: "song",
@@ -6321,7 +6321,7 @@ async function __playAllFromTrack(runId, songToken){
         requestedNote: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.requestedNote || lastNoteState && lastNoteState.requestedNote || ""),
         resolvedSampleKey: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.resolvedSampleKey || lastNoteState && lastNoteState.resolvedSampleKey || ""),
         resolvedNoteUrl: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.resolvedNoteUrl || lastNoteState && lastNoteState.resolvedNoteUrl || ""),
-        chosenPlaybackRoute: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.chosenPlaybackRoute || lastNoteState && lastNoteState.lastStartRoute || lastNoteState && lastNoteState.routeCandidate || "sample / requested-note"),
+        chosenPlaybackRoute: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.chosenPlaybackRoute || lastNoteState && lastNoteState.lastStartRoute || lastNoteState && lastNoteState.routeCandidate || "sample / webaudio"),
         routeDecisionReason: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.routeDecisionReason || "song-route-exception"),
         sourceType: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.sourceType || "song"),
         via: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.via || "song"),
@@ -7098,7 +7098,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
         .then(buf => {
           let resolved = null;
           if (buf) resolved = __playBufferNow(note, meta);
-          if (!resolved && !isScheduledSong){
+          if (!resolved){
             const htmlResolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
             resolved = __wrapLiveHtmlAudioHandle(htmlResolved, note, meta, {
               __wrappedFromHtmlFallback: true
