@@ -524,7 +524,8 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-041"; // index.html を修正したコミットでは必ず更新する
+// baseline固定: 現在の「一曲再生で生音が鳴る状態」を正として扱い、song runtime / sample route / lookup / preload / fallback は変更しない
+const __APP_BUILD_ID__ = "BUILD 20260322-042-baseline-song-live-ok"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
