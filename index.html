@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-032"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-033"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1519,6 +1519,16 @@ const sampleLoadPromises = window.sampleLoadPromises;
 const EXT_TRY = ["mp3"];
 const SAMPLE_OCT_MIN = 3;
 const SAMPLE_OCT_MAX = 6;
+window.SAMPLE_OCT_MIN = SAMPLE_OCT_MIN;
+window.SAMPLE_OCT_MAX = SAMPLE_OCT_MAX;
+function __getPianoSampleOctaveRange(){
+  const min = Number(window.SAMPLE_OCT_MIN);
+  const max = Number(window.SAMPLE_OCT_MAX);
+  return {
+    min: Number.isFinite(min) ? min : 3,
+    max: Number.isFinite(max) ? max : 6
+  };
+}
 
 let preloadPromise = null;
 
@@ -6144,6 +6154,7 @@ function __registerTrackAsSong(sourceId){
   }
 
 async function __playAllFromTrack(runId, songToken){
+    let lastSongPlaybackAttempt = null;
     try{
       if (!__parsed){ alert("先にMIDIを読み込んでください"); return; }
       const sourceId = String(trSel.value||"");
@@ -6188,6 +6199,27 @@ async function __playAllFromTrack(runId, songToken){
           if (!stillActiveBeforeStart) break;
         }
         if (runId !== __getPreviewRunId()) break;
+        const songSampleRequest = (typeof window.__resolvePianoSampleRequest === "function")
+          ? window.__resolvePianoSampleRequest(playNote)
+          : {
+              requestedNote: String(playNote || ""),
+              resolvedSampleKey: String(playNote || ""),
+              resolvedNoteUrl: (typeof window.__noteUrl === "function") ? window.__noteUrl(playNote) : ""
+            };
+        lastSongPlaybackAttempt = {
+          note: playNote,
+          requestedNote: String(songSampleRequest && songSampleRequest.requestedNote || playNote || ""),
+          resolvedSampleKey: String(songSampleRequest && songSampleRequest.resolvedSampleKey || playNote || ""),
+          resolvedNoteUrl: String(songSampleRequest && songSampleRequest.resolvedNoteUrl || ((typeof window.__noteUrl === "function") ? window.__noteUrl(playNote) : "")),
+          chosenPlaybackRoute: "sample / requested-note",
+          routeDecisionReason: (soundMode === "sample") ? "sample-selected" : "song-route-overridden",
+          sourceType: "song",
+          via: "song",
+          songEventId,
+          songNoteIndex,
+          plannedTimeSec,
+          scheduledAudioTime: Number.isFinite(songStartAudioTime) ? (songStartAudioTime + plannedTimeSec) : null
+        };
         await window.playNoteOut(playNote, dur, {
           sourceType:"song",
           token:songToken,
@@ -6200,8 +6232,29 @@ async function __playAllFromTrack(runId, songToken){
         });
       }
     }catch(e){
+      const playbackState = window.__songPlaybackDebugState || null;
+      const noteStates = playbackState && playbackState.noteStates ? playbackState.noteStates : null;
+      const noteStateKeys = noteStates ? Object.keys(noteStates) : [];
+      const lastNoteState = noteStateKeys.length ? noteStates[noteStateKeys[noteStateKeys.length - 1]] : null;
+      const failureDetail = {
+        note: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.note || lastNoteState && lastNoteState.note || ""),
+        requestedNote: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.requestedNote || lastNoteState && lastNoteState.requestedNote || ""),
+        resolvedSampleKey: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.resolvedSampleKey || lastNoteState && lastNoteState.resolvedSampleKey || ""),
+        resolvedNoteUrl: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.resolvedNoteUrl || lastNoteState && lastNoteState.resolvedNoteUrl || ""),
+        chosenPlaybackRoute: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.chosenPlaybackRoute || lastNoteState && lastNoteState.lastStartRoute || lastNoteState && lastNoteState.routeCandidate || "sample / requested-note"),
+        routeDecisionReason: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.routeDecisionReason || "song-route-exception"),
+        sourceType: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.sourceType || "song"),
+        via: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.via || "song"),
+        songEventId: String(lastSongPlaybackAttempt && lastSongPlaybackAttempt.songEventId || lastNoteState && lastNoteState.songEventId || ""),
+        songNoteIndex: Number.isFinite(Number(lastSongPlaybackAttempt && lastSongPlaybackAttempt.songNoteIndex)) ? Number(lastSongPlaybackAttempt.songNoteIndex) : null,
+        plannedTimeSec: Number.isFinite(Number(lastSongPlaybackAttempt && lastSongPlaybackAttempt.plannedTimeSec)) ? Number(lastSongPlaybackAttempt.plannedTimeSec) : (Number.isFinite(Number(lastNoteState && lastNoteState.plannedTimeSec)) ? Number(lastNoteState.plannedTimeSec) : null),
+        scheduledAudioTime: Number.isFinite(Number(lastSongPlaybackAttempt && lastSongPlaybackAttempt.scheduledAudioTime)) ? Number(lastSongPlaybackAttempt.scheduledAudioTime) : (Number.isFinite(Number(lastNoteState && lastNoteState.lastScheduledAudioTime)) ? Number(lastNoteState.lastScheduledAudioTime) : null)
+      };
+      try{ console.error("[song playback failure]", Object.assign({
+        message: e && e.message ? e.message : String(e),
+        stack: e && e.stack ? String(e.stack) : ""
+      }, failureDetail)); }catch(_e){}
       console.error(e);
-      alert("再生失敗: " + (e && e.message ? e.message : String(e)));
     }finally{
       try{ window.__finalizeSongLengthDebug && window.__finalizeSongLengthDebug(runId === __getPreviewRunId() ? "song-ended" : "song-cancelled"); }catch(_e){}
       // reset button state if this run is the latest (or cancelled)
@@ -6597,8 +6650,13 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const L = m[1];
       const acc = m[2] || "";
       let oct = parseInt(m[3], 10);
-      if (oct < SAMPLE_OCT_MIN) oct = SAMPLE_OCT_MIN;
-      if (oct > SAMPLE_OCT_MAX) oct = SAMPLE_OCT_MAX;
+      const octaveRange = (typeof __getPianoSampleOctaveRange === "function")
+        ? __getPianoSampleOctaveRange()
+        : { min:3, max:6 };
+      const sampleOctMin = Number.isFinite(Number(octaveRange && octaveRange.min)) ? Number(octaveRange.min) : 3;
+      const sampleOctMax = Number.isFinite(Number(octaveRange && octaveRange.max)) ? Number(octaveRange.max) : 6;
+      if (oct < sampleOctMin) oct = sampleOctMin;
+      if (oct > sampleOctMax) oct = sampleOctMax;
       normalized = `${L}${acc}${oct}`;
     }
     return {
