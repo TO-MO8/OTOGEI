@@ -525,10 +525,14 @@ window.sampleBufCache = window.sampleCache;
 
 
 // baseline固定: #75 の一曲再生 runtime / 挙動を正とし、#76 で入った song 側の sample 解決変更は戻したまま維持する
-const __APP_BUILD_ID__ = "BUILD 20260322-045-baseline-pr75-fixed-vs-pr76"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-046-pr75-visible-marker"; // index.html を修正したコミットでは必ず更新する
 const __APP_BUILD_BASELINE_NOTE__ = "#75 baseline固定: 比較対象は #75 → #76 のみ。回帰原因候補は playcall-no-start 強化時に入った song 側の sample 解決/runtime 変更。";
+const __APP_BUILD_BASELINE_SOURCE__ = "PR #75";
+const __APP_BUILD_BASELINE_MARKER__ = "PR75-BASELINE-VISIBLE-MARKER-20260322-046";
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__APP_BUILD_BASELINE_NOTE__ = __APP_BUILD_BASELINE_NOTE__;
+window.__APP_BUILD_BASELINE_SOURCE__ = __APP_BUILD_BASELINE_SOURCE__;
+window.__APP_BUILD_BASELINE_MARKER__ = __APP_BUILD_BASELINE_MARKER__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
 window.__liveSampleDebugHistory = window.__liveSampleDebugHistory || [];
@@ -551,15 +555,23 @@ window.__getLiveInputDebugSeverity = window.__getLiveInputDebugSeverity || funct
 window.__applyBuildVersionBadge = function(){
   try{
     const currentBuildId = String(window.__APP_BUILD_ID__ || __APP_BUILD_ID__ || "");
+    const baselineSource = String(window.__APP_BUILD_BASELINE_SOURCE__ || __APP_BUILD_BASELINE_SOURCE__ || "");
+    const baselineMarker = String(window.__APP_BUILD_BASELINE_MARKER__ || __APP_BUILD_BASELINE_MARKER__ || "");
     const badge = document.getElementById("buildBadge");
     if (badge){
-      badge.textContent = currentBuildId;
+      badge.textContent = baselineMarker ? `${currentBuildId} / ${baselineMarker}` : currentBuildId;
       badge.dataset.buildId = currentBuildId;
-      badge.title = currentBuildId;
+      badge.dataset.baselineSource = baselineSource;
+      badge.dataset.baselineMarker = baselineMarker;
+      badge.title = baselineMarker ? `${currentBuildId}
+${baselineMarker}` : currentBuildId;
+    }
+    if (document.body){
+      document.body.dataset.buildId = currentBuildId;
+      document.body.dataset.baselineSource = baselineSource;
     }
     if (!window.__buildVersionLogged){
-      console.log("[build/version]", currentBuildId);
-      console.log("[build/baseline]", window.__APP_BUILD_BASELINE_NOTE__ || "");
+      console.log(`[baseline marker] current build id = ${currentBuildId} | baseline source = ${baselineSource} | runtime changed = no | marker = ${baselineMarker}`);
       window.__buildVersionLogged = true;
     }
   }catch(_e){}
