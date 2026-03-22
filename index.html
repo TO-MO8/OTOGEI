@@ -525,7 +525,7 @@ window.sampleBufCache = window.sampleCache;
 
 
 // baseline固定: #75 の一曲再生 runtime / 挙動を正とし、#76 で入った song 側の sample 解決変更は戻したまま維持する
-const __APP_BUILD_ID__ = "BUILD 20260322-047-pr75-song-runtime"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-047-pr75-song-runtime-diag"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -4640,7 +4640,19 @@ function buildSongFromTrack(parsed, trackIndex){
     const last = out[out.length-1];
     const minGap = Math.max(1, Math.floor(parsed.ticksPerBeat/16));
     if (!last || last.n !== nn.n || last.o !== nn.o || (tick - last.__tick) >= minGap){
-      out.push({ n: nn.n, o: nn.o, d: 1, __tick: tick, __durTick: (best.durTick!=null?best.durTick:null) });
+      out.push({
+        n: nn.n,
+        o: nn.o,
+        d: 1,
+        __tick: tick,
+        __durTick: (best.durTick!=null?best.durTick:null),
+        __midi: Number.isFinite(Number(best.note)) ? Number(best.note) : null,
+        __ch: Number.isFinite(Number(best.ch)) ? Number(best.ch) : null,
+        __trackIndex: Number.isFinite(Number(tr.index)) ? Number(tr.index) : null,
+        __trackName: tr && tr.name ? String(tr.name) : "",
+        __isPercussion: Number(best.ch) === 9,
+        __isDrumLike: Number(best.ch) === 9 || __SONG_DIAG_DRUM_WATCH_SET__.has(Number(best.note))
+      });
     }
 
     i = j;
@@ -4919,6 +4931,22 @@ return trSources[0]?.id || sources[0].id;
     __songPlaybackState.isAllPlaying = !!v;
     return __songPlaybackState.isAllPlaying;
   };
+  const __SONG_DIAG_DRUM_WATCH_MIDI__ = Object.freeze({
+    C2: 36,
+    F2: 41,
+    Fs2: 42,
+    Gs2: 44,
+    As2: 46
+  });
+  const __SONG_DIAG_DRUM_WATCH_SET__ = new Set(Object.values(__SONG_DIAG_DRUM_WATCH_MIDI__));
+  function __songDiagNoteNameFromMidi(midi){
+    const nn = __midiToNoteName(Number(midi));
+    return nn && nn.n != null && nn.o != null ? `${String(nn.n).replace(/#/g, "s")}${nn.o}` : "";
+  }
+  function __songDiagIsDrumLike(detail){
+    const midi = Number(detail && (detail.originalMidiNoteNumber ?? detail.midiNoteNumber ?? detail.midi));
+    return !!(detail && detail.isDrumLike) || !!(detail && detail.isPercussion) || Number(detail && detail.midiChannel) === 9 || (Number.isFinite(midi) && __SONG_DIAG_DRUM_WATCH_SET__.has(midi));
+  }
   function __getSongDiagEventId(detail, state){
     if (detail && detail.songEventId != null && String(detail.songEventId).trim()) return String(detail.songEventId).trim();
     if (state){
@@ -4927,6 +4955,19 @@ return trSources[0]?.id || sources[0].id;
       if (note && Number.isFinite(index)) return `${state.runId || 0}:${state.token || 0}:${index}:${note}`;
     }
     return "";
+  }
+  function __inferSongPlayCallNoStartReason(event){
+    if (!event || event.startedRoute) return "";
+    if (event.playCallNoStartReason) return String(event.playCallNoStartReason);
+    const phaseCounts = event.phaseCounts || {};
+    if (!Number(phaseCounts.playCall || 0)) return "";
+    if (event.lastDropReason) return String(event.lastDropReason);
+    if (event.lastSkipReason) return String(event.lastSkipReason);
+    if (event.lastReason) return String(event.lastReason);
+    if (event.routeDecisionReason) return String(event.routeDecisionReason);
+    if (Number(phaseCounts.stop || 0)) return "stop-before-start";
+    if (Number(phaseCounts.log || 0)) return "log-only-no-start";
+    return "playcall-without-start-or-drop-log";
   }
   function __resetSongDiagState(info){
     const next = {
@@ -4969,6 +5010,17 @@ return trSources[0]?.id || sources[0].id;
         usesSongSchedulingOnly: false,
         plannedTimeSec: null,
         startedRoute: "",
+        midiChannel: null,
+        trackIndex: null,
+        trackName: "",
+        isPercussion: false,
+        isDrumLike: false,
+        originalMidiNoteNumber: null,
+        originalMidiNoteName: "",
+        lastReason: "",
+        lastDropReason: "",
+        lastSkipReason: "",
+        playCallNoStartReason: "",
         phaseCounts: Object.create(null)
       });
       event.phaseCounts[kind] = Number(event.phaseCounts[kind] || 0) + 1;
@@ -4981,7 +5033,20 @@ return trSources[0]?.id || sources[0].id;
       if (detail && detail.usesButtonLikePianoPath != null) event.usesButtonLikePianoPath = !!detail.usesButtonLikePianoPath;
       if (detail && detail.usesSongSchedulingOnly != null) event.usesSongSchedulingOnly = !!detail.usesSongSchedulingOnly;
       if (detail && Number.isFinite(Number(detail.plannedTimeSec))) event.plannedTimeSec = Number(Number(detail.plannedTimeSec).toFixed(6));
+      if (detail && Number.isFinite(Number(detail.midiChannel))) event.midiChannel = Number(detail.midiChannel);
+      if (detail && Number.isFinite(Number(detail.trackIndex))) event.trackIndex = Number(detail.trackIndex);
+      if (detail && detail.trackName != null) event.trackName = String(detail.trackName);
+      if (detail && detail.isPercussion != null) event.isPercussion = !!detail.isPercussion;
+      if (detail && detail.isDrumLike != null) event.isDrumLike = !!detail.isDrumLike;
+      if (detail && Number.isFinite(Number(detail.originalMidiNoteNumber))) event.originalMidiNoteNumber = Number(detail.originalMidiNoteNumber);
+      if (!event.originalMidiNoteName && Number.isFinite(event.originalMidiNoteNumber)) event.originalMidiNoteName = __songDiagNoteNameFromMidi(event.originalMidiNoteNumber);
+      if (detail && detail.reason != null) event.lastReason = String(detail.reason);
+      if (kind === "drop" && detail && detail.reason != null) event.lastDropReason = String(detail.reason);
+      if (kind === "skip" && detail && detail.reason != null) event.lastSkipReason = String(detail.reason);
       if (kind === "start") event.startedRoute = String(detail && (detail.route || detail.chosenPlaybackRoute) || "");
+      if (!event.isDrumLike) event.isDrumLike = __songDiagIsDrumLike(event);
+      if (!event.playCallNoStartReason) event.playCallNoStartReason = __inferSongPlayCallNoStartReason(event);
+      else if (event.startedRoute) event.playCallNoStartReason = "";
     }
     if (kind === "emit") state.emittedCount += 1;
     if (kind === "start"){
@@ -4996,8 +5061,49 @@ return trSources[0]?.id || sources[0].id;
     const state = window.__songDiagState;
     if (!state || state.finalized) return state || null;
     state.finalized = true;
+    const eventIds = Array.isArray(state.songEventIdOrder) ? state.songEventIdOrder.slice() : [];
+    const songEventStats = eventIds.reduce((acc, id) => {
+      const baseEvent = Object.assign({}, state.events[id]);
+      baseEvent.playCallNoStartReason = __inferSongPlayCallNoStartReason(baseEvent);
+      if (!baseEvent.originalMidiNoteName && Number.isFinite(Number(baseEvent.originalMidiNoteNumber))){
+        baseEvent.originalMidiNoteName = __songDiagNoteNameFromMidi(baseEvent.originalMidiNoteNumber);
+      }
+      if (!baseEvent.isDrumLike) baseEvent.isDrumLike = __songDiagIsDrumLike(baseEvent);
+      acc[id] = baseEvent;
+      return acc;
+    }, {});
+    const missingStarts = eventIds
+      .map(id => songEventStats[id])
+      .filter(event => event && Number(event.phaseCounts && event.phaseCounts.playCall || 0) > 0 && !event.startedRoute);
+    const drumWatchStats = missingStarts.reduce((acc, event) => {
+      const chKey = Number.isFinite(Number(event.midiChannel)) ? `ch:${event.midiChannel}` : "ch:?";
+      acc.channels[chKey] = Number(acc.channels[chKey] || 0) + 1;
+      const noteKey = event.originalMidiNoteName || (Number.isFinite(Number(event.originalMidiNoteNumber)) ? String(event.originalMidiNoteNumber) : "unknown");
+      acc.notes[noteKey] = Number(acc.notes[noteKey] || 0) + 1;
+      return acc;
+    }, { channels: Object.create(null), notes: Object.create(null) });
+    const missingStartsSample = missingStarts.slice(0, 12).map(event => ({
+      songEventId: event.songEventId || "",
+      note: event.note || "",
+      playCallNoStartReason: event.playCallNoStartReason || "",
+      midiChannel: Number.isFinite(Number(event.midiChannel)) ? Number(event.midiChannel) : null,
+      trackIndex: Number.isFinite(Number(event.trackIndex)) ? Number(event.trackIndex) : null,
+      trackName: event.trackName || "",
+      isPercussion: !!event.isPercussion,
+      isDrumLike: !!event.isDrumLike,
+      originalMidiNoteNumber: Number.isFinite(Number(event.originalMidiNoteNumber)) ? Number(event.originalMidiNoteNumber) : null,
+      originalMidiNoteName: event.originalMidiNoteName || "",
+      plannedTimeSec: Number.isFinite(Number(event.plannedTimeSec)) ? Number(event.plannedTimeSec) : null,
+      routeDecisionReason: event.routeDecisionReason || "",
+      chosenPlaybackRoute: event.chosenPlaybackRoute || "",
+      startedRoute: event.startedRoute || ""
+    }));
     const summary = {
       reason: String(reason || "completed"),
+      buildId: String(window.__APP_BUILD_ID__ || __APP_BUILD_ID__ || ""),
+      runtimeBaselineBuildId: "BUILD 20260322-047-pr75-song-runtime",
+      runtimeMatchesBaseline047: true,
+      runtimeChangeNote: "diagnostics-only; song runtime / sample route / preload / lookup / fallback / playNoteOut / scheduled start unchanged from 047",
       runId: state.runId || 0,
       token: state.token || 0,
       mode: state.mode || "",
@@ -5006,23 +5112,28 @@ return trSources[0]?.id || sources[0].id;
       emittedCount: Number(state.emittedCount || 0),
       startedCount: Number(state.startedCount || 0),
       droppedCount: Number(state.droppedCount || 0),
-      uniqueSongEventIdCount: Array.isArray(state.songEventIdOrder) ? state.songEventIdOrder.length : 0,
-      sampleSongEventIds: Array.isArray(state.songEventIdOrder) ? state.songEventIdOrder.slice(0, 10) : [],
-      songEventStats: Array.isArray(state.songEventIdOrder)
-        ? state.songEventIdOrder.reduce((acc, id) => {
-            acc[id] = Object.assign({}, state.events[id]);
-            return acc;
-          }, {})
-        : {}
+      uniqueSongEventIdCount: eventIds.length,
+      sampleSongEventIds: eventIds.slice(0, 10),
+      missingStartCount: missingStarts.length,
+      drumWatchTargets: Object.assign({}, __SONG_DIAG_DRUM_WATCH_MIDI__),
+      missingStartChannels: Object.assign({}, drumWatchStats.channels),
+      missingStartOriginalNotes: Object.assign({}, drumWatchStats.notes),
+      songEventStats
     };
     console.log("[song timing summary]", summary);
+    console.log("[song missing starts sample]", missingStartsSample);
     console.log("[song route summary]", Object.assign({}, state.routeStats));
     return summary;
+  }
+  function __markSongPlaybackDebug(kind, detail){
+    try{ window.__recordSongDiag && window.__recordSongDiag(kind, detail); }catch(_e){}
+    return detail || null;
   }
   try{
     window.__resetSongDiagState = __resetSongDiagState;
     window.__recordSongDiag = __recordSongDiag;
     window.__finalizeSongDiagState = __finalizeSongDiagState;
+    window.__markSongPlaybackDebug = window.__markSongPlaybackDebug || __markSongPlaybackDebug;
   }catch(_e){}
   function __clearSongPlaybackAsync(){
     try{
@@ -5270,7 +5381,19 @@ function __registerTrackAsSong(sourceId){
         const plannedTimeSec = Math.max(0, __ticksToMs(0, nn.__tick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond) / 1000);
         const songEventId = `${runId}:${songToken}:${sourceId}:${i}`;
         if (runId !== __getPreviewRunId()) break;
-        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, songEventId, songNoteIndex:i, plannedTimeSec }); // note length (sound)
+        try{ window.__recordSongDiag && window.__recordSongDiag("queue", {
+          songEventId,
+          songNoteIndex: i,
+          note: `${playNote.n}${playNote.o}`,
+          plannedTimeSec,
+          midiChannel: Number.isFinite(Number(nn && nn.__ch)) ? Number(nn.__ch) : null,
+          trackIndex: Number.isFinite(Number(nn && nn.__trackIndex)) ? Number(nn.__trackIndex) : null,
+          trackName: nn && nn.__trackName != null ? String(nn.__trackName) : "",
+          isPercussion: !!(nn && nn.__isPercussion),
+          isDrumLike: !!(nn && nn.__isDrumLike),
+          originalMidiNoteNumber: Number.isFinite(Number(nn && nn.__midi)) ? Number(nn.__midi) : null
+        }); }catch(_e){}
+        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, songEventId, songNoteIndex:i, plannedTimeSec, midiChannel: nn && nn.__ch, trackIndex: nn && nn.__trackIndex, trackName: nn && nn.__trackName, isPercussion: nn && nn.__isPercussion, isDrumLike: nn && nn.__isDrumLike, originalMidiNoteNumber: nn && nn.__midi }); // note length (sound)
         if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         const stillActive = await __songPlaybackSleep(runId, gapMs); // spacing (rhythm)
@@ -5365,6 +5488,18 @@ async function __playAllFromTrack(runId, songToken){
           if (!stillActiveBeforeStart) break;
         }
         if (runId !== __getPreviewRunId()) break;
+        try{ window.__recordSongDiag && window.__recordSongDiag("queue", {
+          songEventId,
+          songNoteIndex,
+          note: `${playNote.n}${playNote.o}`,
+          plannedTimeSec,
+          midiChannel: Number.isFinite(Number(nn && nn.__ch)) ? Number(nn.__ch) : null,
+          trackIndex: Number.isFinite(Number(nn && nn.__trackIndex)) ? Number(nn.__trackIndex) : null,
+          trackName: nn && nn.__trackName != null ? String(nn.__trackName) : "",
+          isPercussion: !!(nn && nn.__isPercussion),
+          isDrumLike: !!(nn && nn.__isDrumLike),
+          originalMidiNoteNumber: Number.isFinite(Number(nn && nn.__midi)) ? Number(nn.__midi) : null
+        }); }catch(_e){}
         await window.playNoteOut(playNote, dur, {
           sourceType:"song",
           token:songToken,
@@ -5373,7 +5508,13 @@ async function __playAllFromTrack(runId, songToken){
           matchLiveInputSample:true,
           plannedTimeSec,
           songStartAudioTime,
-          scheduledAudioTime: Number.isFinite(songStartAudioTime) ? (songStartAudioTime + plannedTimeSec) : null
+          scheduledAudioTime: Number.isFinite(songStartAudioTime) ? (songStartAudioTime + plannedTimeSec) : null,
+          midiChannel: nn && nn.__ch,
+          trackIndex: nn && nn.__trackIndex,
+          trackName: nn && nn.__trackName,
+          isPercussion: nn && nn.__isPercussion,
+          isDrumLike: nn && nn.__isDrumLike,
+          originalMidiNoteNumber: nn && nn.__midi
         });
       }
     }catch(e){
