@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260321-028"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-029"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -605,7 +605,7 @@ window.__logPlayPianoSampleEntry = window.__logPlayPianoSampleEntry || function(
     const token = Number(meta && meta.token) || 0;
     const songEventId = (isSongPlayback && meta && meta.songEventId) ? String(meta.songEventId) : "";
     const emitKey = (isSongPlayback && token && note) ? `${token}:${note}` : "";
-    const noteStateKey = songEventId || emitKey;
+    const noteStateKey = songEventId || (!songEventId ? emitKey : "");
     const noteState = (noteStateKey && state && state.noteStates) ? state.noteStates[noteStateKey] : null;
     const callPerf = Number(meta && meta.callPerf);
     const lastEnter = state && state.lastPlayPianoSampleEnter ? state.lastPlayPianoSampleEnter : null;
@@ -1739,13 +1739,25 @@ async function playSample(note, octave, durMs, opts={}){
     const via = opts.sourceType === "song" ? "song" : (opts.sourceType === "live" ? "live" : "question");
     const isSongPlayback = opts.sourceType === "song";
     const matchLiveInputSample = !!opts.matchLiveInputSample;
+    const getSongCurrentAudioTime = () => {
+      try{
+        const ctx = window.audioCtx || (typeof window.ensureAudioCreated === "function" ? window.ensureAudioCreated() : null);
+        const t = ctx && Number(ctx.currentTime);
+        return Number.isFinite(t) ? t : null;
+      }catch(_e){}
+      return null;
+    };
     if (isSongPlayback){
       try{
         const hadBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
         window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
           note: full,
           matchLiveInputSample,
-          hadBuffer
+          hadBuffer,
+          songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+          songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
+          plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+          scheduledAudioTime: Number.isFinite(Number(opts.scheduledAudioTime)) ? Number(opts.scheduledAudioTime) : null
         });
         if (!hadBuffer && typeof window.__preloadPianoBuffer === "function"){
           const preloadStartedAt = performance.now();
@@ -1755,13 +1767,21 @@ async function playSample(note, octave, durMs, opts={}){
               try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
                 note: full,
                 reason: buf ? "song-preload-resolved" : "song-preload-resolved-empty",
-                preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3))
+                preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
+                songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+                songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
+                plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+                scheduledAudioTime: Number.isFinite(Number(opts.scheduledAudioTime)) ? Number(opts.scheduledAudioTime) : null
               }); }catch(_){}
             }).catch(err => {
               try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
                 note: full,
                 reason: "song-preload-rejected",
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
+                songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
+                songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
+                plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
+                scheduledAudioTime: Number.isFinite(Number(opts.scheduledAudioTime)) ? Number(opts.scheduledAudioTime) : null,
                 error: err && err.message ? err.message : String(err)
               }); }catch(_){}
             });
@@ -1798,22 +1818,79 @@ async function playSample(note, octave, durMs, opts={}){
       durMs: sampleMeta.durMs,
       autoStopFadeMs,
       matchLiveInputSample,
+      plannedTimeSec: sampleMeta.plannedTimeSec,
+      scheduledAudioTime: sampleMeta.scheduledAudioTime,
+      routeCandidate: "sample",
       songEventId: sampleMeta.songEventId,
       songNoteIndex: sampleMeta.songNoteIndex
     }); }catch(_){}
     const h = window.__playPianoSample(full, sampleMeta);
     try{
       if (isSongPlayback && window.__markSongPlaybackDebug){
+        const currentAudioTime = getSongCurrentAudioTime();
+        const handleState = __getSongPlaybackHandleState(h, sampleMeta);
+        const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
         window.__markSongPlaybackDebug(h ? "log" : "drop", {
           note: full,
           reason: h ? "play-handle-created" : "play-returned-null",
           handleType: h && (h.type || typeof h) || null,
-          route: h && h.__liveRoute || null,
+          handleState,
+          hasBuffer,
+          route: h && h.__liveRoute || "sample",
+          routeCandidate: h && h.__liveRoute || "sample",
+          scheduledAudioTime: sampleMeta.scheduledAudioTime,
+          currentAudioTime,
+          plannedTimeSec: sampleMeta.plannedTimeSec,
           songEventId: sampleMeta.songEventId,
           songNoteIndex: sampleMeta.songNoteIndex
         });
       }
     }catch(_){}
+    if (isSongPlayback && h && h.type === "pending" && h.__readyPromise && typeof h.__readyPromise.then === "function" && !h.__songPlayCallNoStartTracked){
+      h.__songPlayCallNoStartTracked = true;
+      h.__readyPromise.then(resolvedHandle => {
+        try{
+          const currentAudioTime = getSongCurrentAudioTime();
+          const resolved = (typeof window.__resolveLiveSampleHandle === "function")
+            ? window.__resolveLiveSampleHandle(resolvedHandle || h, full, sampleMeta)
+            : resolvedHandle;
+          const handleState = __getSongPlaybackHandleState(resolved || resolvedHandle || h, sampleMeta);
+          const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
+          if (!resolved || handleState === "pending-handle" || handleState === "pending-handle-not-ready"){
+            window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
+              note: full,
+              reason: hasBuffer ? "route-aborted-before-start" : "pending-handle-not-ready",
+              handleState,
+              hasBuffer,
+              route: "sample / webaudio",
+              routeCandidate: "sample / webaudio",
+              scheduledAudioTime: sampleMeta.scheduledAudioTime,
+              currentAudioTime,
+              plannedTimeSec: sampleMeta.plannedTimeSec,
+              songEventId: sampleMeta.songEventId,
+              songNoteIndex: sampleMeta.songNoteIndex
+            });
+          }
+        }catch(_e){}
+      }).catch(err => {
+        try{
+          window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
+            note: full,
+            reason: "preload-timeout",
+            handleState: "pending-handle-not-ready",
+            hasBuffer: !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full))),
+            route: "sample / webaudio",
+            routeCandidate: "sample / webaudio",
+            scheduledAudioTime: sampleMeta.scheduledAudioTime,
+            currentAudioTime: getSongCurrentAudioTime(),
+            plannedTimeSec: sampleMeta.plannedTimeSec,
+            songEventId: sampleMeta.songEventId,
+            songNoteIndex: sampleMeta.songNoteIndex,
+            error: err && err.message ? err.message : String(err)
+          });
+        }catch(_e){}
+      });
+    }
     if (h){
       try{
         window.__activePianoSampleHandles = window.__activePianoSampleHandles || new Set();
@@ -4871,6 +4948,13 @@ return trSources[0]?.id || sources[0].id;
         tokenStoppedBeforeStartSeen: false,
         filteredNonplayableSeen: false,
         playCallNoStartSeen: false,
+        playCallNoStartReason: "",
+        playCallNoStartReasonCounts: Object.create(null),
+        lastPlayCallNoStartDetail: null,
+        lastScheduledAudioTime: null,
+        lastCurrentAudioTime: null,
+        lastHandleState: "",
+        lastHasBuffer: null,
         terminalReason: "",
         lastStartRoute: "",
         lastStartPerfNow: null,
@@ -4903,10 +4987,64 @@ return trSources[0]?.id || sources[0].id;
     if (raw === "primary-started") return raw;
     if (raw === "filtered-nonplayable") return raw;
     if (raw === "preload-not-ready" || raw === "song-preload-rejected") return "preload-not-ready";
+    if (raw === "no-buffer-handle" || raw === "pending-handle-not-ready" || raw === "preload-timeout" || raw === "invalid-buffer" || raw === "source-start-threw" || raw === "scheduled-time-already-past" || raw === "token-stopped-after-playcall" || raw === "route-aborted-before-start") return "playcall-no-start";
     if (raw === "playcall-no-start" || raw === "play-returned-null" || raw === "primary-start-failed") return "playcall-no-start";
     if (raw === "token-stopped-before-start" || raw === "token-stopped" || raw.startsWith("allow-audio-emit-blocked")) return "token-stopped-before-start";
     if (raw === "skipped-before-playcall") return raw;
     return raw;
+  }
+  function __getSongPlaybackHandleState(handle, meta){
+    let normalized = handle;
+    try{
+      if (typeof window.__normalizeLiveSampleHandle === "function") normalized = window.__normalizeLiveSampleHandle(handle, meta);
+    }catch(_e){}
+    if (!normalized) return "no-buffer-handle";
+    if (normalized.type === "pending"){
+      if (normalized.__pendingStart === false) return "pending-handle-not-ready";
+      return "pending-handle";
+    }
+    if (normalized.type) return String(normalized.type);
+    if (typeof normalized === "object") return "object-without-type";
+    return `non-object:${typeof normalized}`;
+  }
+  function __normalizeSongPlayCallNoStartReason(reason, detail){
+    const raw = String(reason || "").trim();
+    if (!raw) return "playcall-no-start";
+    if (raw === "no-buffer-handle" || raw === "pending-handle-not-ready" || raw === "preload-timeout" || raw === "invalid-buffer" || raw === "source-start-threw" || raw === "scheduled-time-already-past" || raw === "token-stopped-after-playcall" || raw === "route-aborted-before-start") return raw;
+    if (raw === "buffer-missing-at-start" || raw === "play-returned-null") return "no-buffer-handle";
+    if (raw === "song-preload-rejected") return "preload-timeout";
+    if (raw === "song-preload-resolved-empty") return "pending-handle-not-ready";
+    if (raw === "buffer-start-exception" || raw === "html-play-exception") return "source-start-threw";
+    if (raw === "allow-audio-emit-blocked" || raw === "allow-audio-emit-blocked-html" || raw === "token-stopped" || raw === "token-stopped-before-start") return "token-stopped-after-playcall";
+    if (raw === "primary-start-failed" || raw === "fallback-aborted") return "route-aborted-before-start";
+    if (raw === "playcall-no-start"){
+      const handleState = String(detail && detail.handleState || "");
+      if (handleState === "pending-handle" || handleState === "pending-handle-not-ready") return "pending-handle-not-ready";
+      if (detail && detail.hasBuffer === false) return "no-buffer-handle";
+      return "route-aborted-before-start";
+    }
+    return raw;
+  }
+  function __rememberSongPlayCallNoStart(noteState, detail){
+    if (!noteState) return "";
+    const normalizedReason = __normalizeSongPlayCallNoStartReason(detail && (detail.branchReason || detail.reason), detail);
+    if (!normalizedReason) return "";
+    noteState.playCallNoStartSeen = true;
+    noteState.playCallNoStartReason = normalizedReason;
+    if (!noteState.playCallNoStartReasonCounts) noteState.playCallNoStartReasonCounts = Object.create(null);
+    noteState.playCallNoStartReasonCounts[normalizedReason] = Number(noteState.playCallNoStartReasonCounts[normalizedReason] || 0) + 1;
+    noteState.lastPlayCallNoStartDetail = {
+      songEventId: noteState.songEventId || "",
+      note: String(detail && detail.note || noteState.note || ""),
+      plannedTimeSec: Number.isFinite(Number(detail && detail.plannedTimeSec)) ? Number(Number(detail.plannedTimeSec).toFixed(6)) : (Number.isFinite(Number(noteState.plannedTimeSec)) ? Number(Number(noteState.plannedTimeSec).toFixed(6)) : null),
+      scheduledAudioTime: Number.isFinite(Number(detail && detail.scheduledAudioTime)) ? Number(Number(detail.scheduledAudioTime).toFixed(6)) : null,
+      currentAudioTime: Number.isFinite(Number(detail && detail.currentAudioTime)) ? Number(Number(detail.currentAudioTime).toFixed(6)) : null,
+      handleState: String(detail && detail.handleState || noteState.lastHandleState || ""),
+      hasBuffer: (detail && typeof detail.hasBuffer === "boolean") ? detail.hasBuffer : noteState.lastHasBuffer,
+      routeCandidate: String(detail && detail.routeCandidate || detail && detail.route || noteState.lastStartRoute || noteState.routeCandidate || ""),
+      playCallNoStartReason: normalizedReason
+    };
+    return normalizedReason;
   }
   function __normalizeSongSkipReason(reason, detail){
     const explicit = String(detail && detail.skipReason || "").trim();
@@ -5200,6 +5338,7 @@ return trSources[0]?.id || sources[0].id;
       let skippedBeforePlayCallCount = 0;
       const terminalReasonCounts = Object.create(null);
       const skippedBeforePlayCallReasonCounts = Object.create(null);
+      const playcallNoStartReasonCounts = Object.create(null);
       const terminalReasonCountsBreakdown = Object.create(null);
       const songEventStats = Object.create(null);
       const missingStartsSample = [];
@@ -5219,6 +5358,7 @@ return trSources[0]?.id || sources[0].id;
           const skippedBeforePlayCall = (!started && Number(noteState.skippedBeforePlayCallCount || 0) > 0) ? 1 : 0;
           const terminalReason = __deriveSongPlaybackTerminalReason(noteState);
           const skipReason = String(noteState.lastSkipReason || noteState.primarySkipReason || "");
+          const playCallNoStartReason = String(noteState.playCallNoStartReason || "");
           noteState.terminalReason = terminalReason;
           if (started) primaryStartedEventCount += 1;
           if (started && noteState.secondaryDropAfterPrimarySeen) secondaryDropAfterPrimaryCount += 1;
@@ -5230,6 +5370,9 @@ return trSources[0]?.id || sources[0].id;
             if (skipReason) skippedBeforePlayCallReasonCounts[skipReason] = Number(skippedBeforePlayCallReasonCounts[skipReason] || 0) + 1;
           }
           if (terminalReason) terminalReasonCounts[terminalReason] = Number(terminalReasonCounts[terminalReason] || 0) + 1;
+          if (playCalledButNeverStarted && playCallNoStartReason){
+            playcallNoStartReasonCounts[playCallNoStartReason] = Number(playcallNoStartReasonCounts[playCallNoStartReason] || 0) + 1;
+          }
           songEventStats[eventKey] = {
             songEventId: eventKey,
             emittedCount,
@@ -5241,6 +5384,8 @@ return trSources[0]?.id || sources[0].id;
             skipReason,
             skipReasonCounts: Object.assign({}, noteState.skipReasonCounts || {}),
             terminalReason,
+            playCallNoStartReason,
+            playCallNoStartReasonCounts: Object.assign({}, noteState.playCallNoStartReasonCounts || {}),
             routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
           };
           if (!started && missingStartsSample.length < 20){
@@ -5249,6 +5394,7 @@ return trSources[0]?.id || sources[0].id;
               note: String(noteState.note || ""),
               plannedTimeSec: Number.isFinite(Number(noteState.plannedTimeSec)) ? Number(Number(noteState.plannedTimeSec).toFixed(6)) : null,
               terminalReason,
+              playCallNoStartReason,
               skipReason,
               skipReasonCounts: Object.assign({}, noteState.skipReasonCounts || {}),
               routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
@@ -5290,6 +5436,7 @@ return trSources[0]?.id || sources[0].id;
         playCalledButNeverStartedCount,
         skippedBeforePlayCallCount,
         skippedBeforePlayCallReasonCounts,
+        playcallNoStartReasonCounts,
         terminalReasonCounts,
         terminalReasonCountsBreakdown,
         prePlayFilterAudit: {
@@ -5385,7 +5532,14 @@ return trSources[0]?.id || sources[0].id;
       if (noteState){
         if (payload.note != null && payload.note !== "") noteState.note = String(payload.note);
         if (Number.isFinite(Number(payload.plannedTimeSec))) noteState.plannedTimeSec = Number(payload.plannedTimeSec);
+        if (payload.routeCandidate) noteState.routeCandidate = String(payload.routeCandidate);
         if (payload.route) noteState.routeCandidate = String(payload.route);
+      }
+      if (noteState){
+        if (Number.isFinite(Number(payload.scheduledAudioTime))) noteState.lastScheduledAudioTime = Number(payload.scheduledAudioTime);
+        if (Number.isFinite(Number(payload.currentAudioTime))) noteState.lastCurrentAudioTime = Number(payload.currentAudioTime);
+        if (typeof payload.hasBuffer === "boolean") noteState.lastHasBuffer = payload.hasBuffer;
+        if (payload.handleState) noteState.lastHandleState = String(payload.handleState);
       }
       if (key === "emit" && noteState){
         const summaryCounted = !noteState.emitSummaryCounted;
@@ -5445,7 +5599,7 @@ return trSources[0]?.id || sources[0].id;
         if (normalizedDropReason === "preload-not-ready") noteState.preloadNotReadySeen = true;
         else if (normalizedDropReason === "token-stopped-before-start") noteState.tokenStoppedBeforeStartSeen = true;
         else if (normalizedDropReason === "filtered-nonplayable") noteState.filteredNonplayableSeen = true;
-        else if (normalizedDropReason === "playcall-no-start") noteState.playCallNoStartSeen = true;
+        else if (normalizedDropReason === "playcall-no-start") __rememberSongPlayCallNoStart(noteState, payload);
         if (secondaryDropAfterPrimary) noteState.secondaryDropAfterPrimarySeen = true;
         if (separateDrop) noteState.secondaryDropCount = Number(noteState.secondaryDropCount || 0) + 1;
         else noteState.fatalDropCount = Number(noteState.fatalDropCount || 0) + 1;
@@ -6252,12 +6406,33 @@ window.addEventListener("DOMContentLoaded", ()=>{
     }
     const ctx = window.ensureAudio();
     if (!ctx) return null;
+    const nowCtx = Number.isFinite(Number(ctx && ctx.currentTime)) ? Number(ctx.currentTime) : null;
     const buf = window.__pianoBufCache.get(note) || __getSharedPianoBuffer(note);
     if (!buf){
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
         reason: "buffer-missing-at-start",
         route: "sample / webaudio",
+        routeCandidate: "sample / webaudio",
+        scheduledAudioTime: Number.isFinite(Number(meta && meta.scheduledAudioTime)) ? Number(meta.scheduledAudioTime) : null,
+        currentAudioTime: nowCtx,
+        handleState: "no-buffer-handle",
+        hasBuffer: false,
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+      }); }catch(_){}
+      return null;
+    }
+    if (!buf.duration || !Number.isFinite(Number(buf.duration)) || Number(buf.duration) <= 0){
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
+        note,
+        reason: "invalid-buffer",
+        route: "sample / webaudio",
+        routeCandidate: "sample / webaudio",
+        scheduledAudioTime: Number.isFinite(Number(meta && meta.scheduledAudioTime)) ? Number(meta.scheduledAudioTime) : null,
+        currentAudioTime: nowCtx,
+        handleState: "invalid-buffer",
+        hasBuffer: true,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
         songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
       }); }catch(_){}
@@ -6271,6 +6446,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
       const nowCtx = ctx.currentTime;
       const scheduledAudioTime = Number(meta && meta.scheduledAudioTime);
       const startAt = Number.isFinite(scheduledAudioTime) ? Math.max(nowCtx, scheduledAudioTime) : nowCtx;
+      const schedulePastThresholdSec = 0.05;
+      const scheduledTimeAlreadyPast = Number.isFinite(scheduledAudioTime) && Number.isFinite(nowCtx) && scheduledAudioTime < (nowCtx - schedulePastThresholdSec);
       const matchLiveProfile = __shouldMatchLiveInputSampleProfile(meta);
       const trimMs = matchLiveProfile ? 3 : 0;
       const trimSec = Math.max(0, Math.min(buf.duration - 0.001, trimMs / 1000));
@@ -6301,6 +6478,19 @@ window.addEventListener("DOMContentLoaded", ()=>{
       }
 
       src.connect(g); g.connect(ctx.destination);
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("log", {
+        note,
+        reason: scheduledTimeAlreadyPast ? "scheduled-time-already-past" : "start-attempt",
+        route: "sample / webaudio",
+        routeCandidate: "sample / webaudio",
+        scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
+        currentAudioTime: nowCtx,
+        plannedTimeSec: Number.isFinite(Number(meta && meta.plannedTimeSec)) ? Number(meta.plannedTimeSec) : null,
+        handleState: "buffer-ready",
+        hasBuffer: true,
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+      }); }catch(_){ }
       src.start(startAt, trimSec);
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
         note,
@@ -6315,7 +6505,12 @@ window.addEventListener("DOMContentLoaded", ()=>{
         startLeadMs: Number(startLeadMs.toFixed(3)),
         activeSameNoteVoices: (window.__activeNoteVoices && window.__activeNoteVoices.get(note) && window.__activeNoteVoices.get(note).length) || 0,
         songVolume: gainInfo.songVolume,
-        finalGainAfterSongVolume: gainInfo.finalGainAfterSongVolume
+        finalGainAfterSongVolume: gainInfo.finalGainAfterSongVolume,
+        scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
+        currentAudioTime: nowCtx,
+        handleState: "buffer-ready",
+        hasBuffer: true,
+        routeCandidate: "sample / webaudio"
       }); }catch(_){}
 
       const via = (meta && meta.via) || "unknown";
@@ -6361,8 +6556,13 @@ window.addEventListener("DOMContentLoaded", ()=>{
     }catch(e){
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
-        reason: "buffer-start-exception",
+        reason: scheduledTimeAlreadyPast ? "scheduled-time-already-past" : "buffer-start-exception",
         route: "sample / webaudio",
+        routeCandidate: "sample / webaudio",
+        scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
+        currentAudioTime: nowCtx,
+        handleState: "buffer-ready",
+        hasBuffer: true,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
         songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
         error: e && e.message ? e.message : String(e)
