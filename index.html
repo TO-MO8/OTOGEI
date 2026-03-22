@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-038"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-039"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -784,7 +784,7 @@ window.__logSamplePlaybackCompare = window.__logSamplePlaybackCompare || functio
     const resolvedNoteUrl = String((meta && meta.resolvedNoteUrl) || (resolvedSampleKey && typeof window.__noteUrl === "function" ? window.__noteUrl(resolvedSampleKey) : "") || "").trim();
     const chosenPlaybackRoute = info.route || (info.handle && info.handle.__liveRoute) || (meta && meta.chosenPlaybackRoute) || null;
     const routeDecisionReason = info.reason || (meta && meta.routeDecisionReason) || null;
-    const usesButtonLikePianoPath = chosenPlaybackRoute === "sample / webaudio";
+    const usesButtonLikePianoPath = chosenPlaybackRoute === "sample / webaudio" || chosenPlaybackRoute === "sample / requested-note";
     const usesSongSchedulingOnly = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
     const hasBuffer = !!(resolvedSampleKey && ((window.__pianoBufCache && window.__pianoBufCache.has(resolvedSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(resolvedSampleKey))));
     const handleCandidate = info.handle || null;
@@ -1797,7 +1797,7 @@ async function playSample(note, octave, durMs, opts={}){
         });
       }catch(_e){}
     };
-    const chosenPlaybackRoute = isSongPlayback ? "sample / webaudio" : "sample";
+    const chosenPlaybackRoute = isSongPlayback ? "sample / requested-note" : "sample";
     const routeDecisionReason = String((opts && opts.routeDecisionReason) || (isSongPlayback ? (soundMode === "sample" ? "sample-selected" : "song-route-overridden") : "sample-selected"));
     const isRawPianoPath = !!isSongPlayback;
     const usesButtonLikePianoPath = true;
@@ -2746,7 +2746,7 @@ async function playNoteOut(note, durMs, opts={}){
       ? window.__resolvePianoSampleRequest(emitNote)
       : { requestedNote: emitNote, resolvedSampleKey: emitNote, resolvedNoteUrl: (typeof window.__noteUrl === "function" ? window.__noteUrl(emitNote) : "") };
     const songResolvedSampleKey = songSampleRequest && songSampleRequest.resolvedSampleKey ? String(songSampleRequest.resolvedSampleKey) : emitNote;
-    const getSongHasBuffer = () => !!(isSongPlayback && ((window.__pianoBufCache && window.__pianoBufCache.has(songResolvedSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(songResolvedSampleKey))));
+    const getSongHasBuffer = () => !!(isSongPlayback && ((window.__pianoBufCache && window.__pianoBufCache.has(emitNote)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(emitNote))));
     const logSongRouteDecision = (chosenPlaybackRoute, routeDecisionReason, extra={}) => {
       if (!isSongPlayback) return;
       const payload = Object.assign({
@@ -2783,33 +2783,6 @@ async function playNoteOut(note, durMs, opts={}){
         reason: "allow-audio-emit-blocked-playNoteOut"
       }); }catch(_){}
       return true;
-    }
-
-    if (isSongPlayback){
-      let sampleRouteReason = (soundMode === "sample") ? "sample-selected" : "song-route-overridden";
-      let sampleRouteOk = false;
-      try{
-        if (location && location.protocol === "file:") throw new Error("file protocol blocks sample fetch");
-        await ensureSampleReady();
-        sampleRouteOk = await playSample(noteName, useOct, durMs, Object.assign({}, opts, {
-          via: songPlaybackVia,
-          routeDecisionReason: sampleRouteReason
-        }));
-      }catch(e){
-        sampleRouteOk = false;
-        sampleRouteReason = "sample-route-disabled";
-      }
-      if (sampleRouteOk) return true;
-      if (sampleRouteReason !== "sample-route-disabled"){
-        sampleRouteReason = getSongHasBuffer() ? "no-sample-handle" : "no-buffer";
-      }
-      logSongRouteDecision(
-        soundMode === "gmpiano" ? "gmpiano"
-          : soundMode === "synth" ? "synth"
-          : soundMode === "beep" ? "beep"
-          : "fallback",
-        sampleRouteReason
-      );
     }
 
     // Built-in piano (embedded GM-ish sample). If not ready, fall back to synth/beep.
