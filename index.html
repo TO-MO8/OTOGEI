@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260322-034"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260322-035"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -1755,12 +1755,12 @@ async function playSample(note, octave, durMs, opts={}){
     const resolvedPlaybackSampleKey = (sampleRequest && sampleRequest.resolvedSampleKey)
       ? String(sampleRequest.resolvedSampleKey)
       : full;
-    const playbackSampleKey = isSongPlayback
+    const playbackSampleKey = full;
+    const handleLookupKey = isSongPlayback
       ? __resolveSongSampleLookupKey(sampleRequest.requestedNote, resolvedPlaybackSampleKey, sampleRequest.resolvedNoteUrl)
       : full;
-    const handleLookupKey = playbackSampleKey;
-    const preloadLookupKey = playbackSampleKey;
-    const getHasSongSampleBuffer = () => !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl);
+    const preloadLookupKey = handleLookupKey;
+    const getHasSongSampleBuffer = () => !!((window.__pianoBufCache && window.__pianoBufCache.has(playbackSampleKey)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(playbackSampleKey)));
     const shouldLogSongLookupDebug = isSongPlayback && /^(?:F2|C2|Gs2|Fs2|As2)$/.test(String(sampleRequest.requestedNote || full));
     const logSongLookupDebug = (stage, hasSampleHandle, hasBuffer) => {
       if (!shouldLogSongLookupDebug) return;
@@ -1810,7 +1810,7 @@ async function playSample(note, octave, durMs, opts={}){
     };
     if (isSongPlayback){
       try{
-        const hadBuffer = !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl);
+        const hadBuffer = getHasSongSampleBuffer();
         logSongLookupDebug("preload-check", false, hadBuffer);
         window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
           note: full,
@@ -1834,7 +1834,7 @@ async function playSample(note, octave, durMs, opts={}){
         });
         if (!hadBuffer && typeof window.__preloadPianoBuffer === "function"){
           const preloadStartedAt = performance.now();
-          const preloadPromise = window.__preloadPianoBuffer(preloadLookupKey);
+          const preloadPromise = window.__preloadPianoBuffer(playbackSampleKey);
           if (preloadPromise && typeof preloadPromise.then === "function"){
             preloadPromise.then(buf => {
               try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
@@ -1849,7 +1849,7 @@ async function playSample(note, octave, durMs, opts={}){
                 routeDecisionReason,
                 isRawPianoPath,
                 hasSampleHandle: false,
-                hasBuffer: !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl),
+                hasBuffer: getHasSongSampleBuffer(),
                 sourceType: opts.sourceType || null,
                 via,
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
@@ -1945,7 +1945,7 @@ async function playSample(note, octave, durMs, opts={}){
       if (isSongPlayback && window.__markSongPlaybackDebug){
         const currentAudioTime = getSongCurrentAudioTime();
         const handleState = __getSongPlaybackHandleState(h, sampleMeta);
-        const hasBuffer = !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl);
+        const hasBuffer = getHasSongSampleBuffer();
         logSongLookupDebug("handle-check", !!h, hasBuffer);
         window.__markSongPlaybackDebug(h ? "log" : "drop", {
           note: full,
@@ -1992,7 +1992,7 @@ async function playSample(note, octave, durMs, opts={}){
             ? window.__resolveLiveSampleHandle(resolvedHandle || h, playbackSampleKey, sampleMeta)
             : resolvedHandle;
           const handleState = __getSongPlaybackHandleState(resolved || resolvedHandle || h, sampleMeta);
-          const hasBuffer = !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl);
+          const hasBuffer = getHasSongSampleBuffer();
           logSongLookupDebug("readyPromise", !!resolved, hasBuffer);
           logSongPlaybackRoute("readyPromise", (resolved && resolved.__liveRoute) ? resolved.__liveRoute : chosenPlaybackRoute, {
             note: full,
@@ -2045,7 +2045,7 @@ async function playSample(note, octave, durMs, opts={}){
             via,
             hasSampleHandle: false,
             handleState: "pending-handle-not-ready",
-            hasBuffer: !!__getSongSampleBufferByLookupKey(handleLookupKey, sampleRequest.resolvedNoteUrl),
+            hasBuffer: getHasSongSampleBuffer(),
             hasReadyPromise: true,
             route: "sample / webaudio",
             routeCandidate: "sample / webaudio",
