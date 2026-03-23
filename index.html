@@ -1722,9 +1722,10 @@ async function playSample(note, octave, durMs, opts={}){
   const reqOct = Number(octave)||4;
   const n = String(note||"").replace(/♯/g,"#");
   const full = (n.replace(/#/g,"s")) + String(reqOct);
-  const sampleSupport = (typeof window.__describePianoSampleSupport === "function")
-    ? window.__describePianoSampleSupport(full)
+  const sampleResolution = (typeof window.__resolvePianoSampleRequest === "function")
+    ? window.__resolvePianoSampleRequest(full, opts)
     : null;
+  const resolvedSampleNote = String(sampleResolution && sampleResolution.resolvedNote || full);
 
   const allowed = window.__PIANO_ALLOWED__;
   const isSongPlaybackRequest = opts && opts.sourceType === "song";
@@ -1760,11 +1761,15 @@ async function playSample(note, octave, durMs, opts={}){
     };
     if (isSongPlayback){
       try{
-        const hadBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
+        const hadBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(resolvedSampleNote)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(resolvedSampleNote)));
         window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
           note: full,
           matchLiveInputSample,
           hadBuffer,
+          requestedSample: sampleResolution && sampleResolution.normalizedNote || full,
+          resolvedSample: resolvedSampleNote,
+          fallbackSample: sampleResolution && sampleResolution.fallbackNote || resolvedSampleNote,
+          sampleSupportReason: sampleResolution && sampleResolution.reason || "",
           songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
           songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
           plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
@@ -1772,13 +1777,17 @@ async function playSample(note, octave, durMs, opts={}){
         });
         if (!hadBuffer && typeof window.__preloadPianoBuffer === "function"){
           const preloadStartedAt = performance.now();
-          const preloadPromise = window.__preloadPianoBuffer(full);
+          const preloadPromise = window.__preloadPianoBuffer(resolvedSampleNote, opts);
           if (preloadPromise && typeof preloadPromise.then === "function"){
             preloadPromise.then(buf => {
               try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
                 note: full,
                 reason: buf ? "song-preload-resolved" : "song-preload-resolved-empty",
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
+                requestedSample: sampleResolution && sampleResolution.normalizedNote || full,
+                resolvedSample: resolvedSampleNote,
+                fallbackSample: sampleResolution && sampleResolution.fallbackNote || resolvedSampleNote,
+                sampleSupportReason: sampleResolution && sampleResolution.reason || "",
                 songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
                 songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
                 plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
@@ -1789,6 +1798,10 @@ async function playSample(note, octave, durMs, opts={}){
                 note: full,
                 reason: "song-preload-rejected",
                 preloadWaitMs: Number((performance.now() - preloadStartedAt).toFixed(3)),
+                requestedSample: sampleResolution && sampleResolution.normalizedNote || full,
+                resolvedSample: resolvedSampleNote,
+                fallbackSample: sampleResolution && sampleResolution.fallbackNote || resolvedSampleNote,
+                sampleSupportReason: sampleResolution && sampleResolution.reason || "",
                 songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
                 songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
                 plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
@@ -1800,7 +1813,7 @@ async function playSample(note, octave, durMs, opts={}){
         }
       }catch(_){}
     }else if (matchLiveInputSample){
-      try{ await window.__preloadPianoBuffer(full); }catch(_){}
+      try{ await window.__preloadPianoBuffer(resolvedSampleNote, opts); }catch(_){}
     }
     const autoStopFadeMs = isSongPlayback ? 12 : (matchLiveInputSample ? 6 : 10);
     const sampleMeta = {
@@ -1830,11 +1843,12 @@ async function playSample(note, octave, durMs, opts={}){
       durMs: sampleMeta.durMs,
       autoStopFadeMs,
       matchLiveInputSample,
-      requestedSample: sampleSupport && sampleSupport.normalizedNote || full,
-      fallbackSample: sampleSupport && sampleSupport.clampedNote || full,
-      sampleSupportReason: sampleSupport && sampleSupport.reason || "",
-      exactSampleInstalled: !!(sampleSupport && sampleSupport.exactSampleInstalled),
-      clampedSampleInstalled: !!(sampleSupport && sampleSupport.clampedSampleInstalled),
+      requestedSample: sampleResolution && sampleResolution.normalizedNote || full,
+      resolvedSample: resolvedSampleNote,
+      fallbackSample: sampleResolution && sampleResolution.fallbackNote || resolvedSampleNote,
+      sampleSupportReason: sampleResolution && sampleResolution.reason || "",
+      exactSampleInstalled: !!(sampleResolution && sampleResolution.exactSampleInstalled),
+      clampedSampleInstalled: !!(sampleResolution && sampleResolution.clampedSampleInstalled),
       plannedTimeSec: sampleMeta.plannedTimeSec,
       scheduledAudioTime: sampleMeta.scheduledAudioTime,
       routeCandidate: "sample",
@@ -1846,7 +1860,7 @@ async function playSample(note, octave, durMs, opts={}){
       if (isSongPlayback && window.__markSongPlaybackDebug){
         const currentAudioTime = getSongCurrentAudioTime();
         const handleState = __getSongPlaybackHandleState(h, sampleMeta);
-        const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
+        const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(resolvedSampleNote)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(resolvedSampleNote)));
         window.__markSongPlaybackDebug(h ? "log" : "drop", {
           note: full,
           reason: h ? "play-handle-created" : "play-returned-null",
@@ -1859,7 +1873,11 @@ async function playSample(note, octave, durMs, opts={}){
           currentAudioTime,
           plannedTimeSec: sampleMeta.plannedTimeSec,
           songEventId: sampleMeta.songEventId,
-          songNoteIndex: sampleMeta.songNoteIndex
+          songNoteIndex: sampleMeta.songNoteIndex,
+          requestedSample: sampleResolution && sampleResolution.normalizedNote || full,
+          resolvedSample: resolvedSampleNote,
+          fallbackSample: sampleResolution && sampleResolution.fallbackNote || resolvedSampleNote,
+          sampleSupportReason: sampleResolution && sampleResolution.reason || ""
         });
       }
     }catch(_){}
@@ -1872,7 +1890,7 @@ async function playSample(note, octave, durMs, opts={}){
             ? window.__resolveLiveSampleHandle(resolvedHandle || h, full, sampleMeta)
             : resolvedHandle;
           const handleState = __getSongPlaybackHandleState(resolved || resolvedHandle || h, sampleMeta);
-          const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full)));
+          const hasBuffer = !!((window.__pianoBufCache && window.__pianoBufCache.has(resolvedSampleNote)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(resolvedSampleNote)));
           if (!resolved || handleState === "pending-handle" || handleState === "pending-handle-not-ready"){
             window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
               note: full,
@@ -1885,7 +1903,11 @@ async function playSample(note, octave, durMs, opts={}){
               currentAudioTime,
               plannedTimeSec: sampleMeta.plannedTimeSec,
               songEventId: sampleMeta.songEventId,
-              songNoteIndex: sampleMeta.songNoteIndex
+              songNoteIndex: sampleMeta.songNoteIndex,
+              requestedSample: sampleResolution && sampleResolution.normalizedNote || full,
+              resolvedSample: resolvedSampleNote,
+              fallbackSample: sampleResolution && sampleResolution.fallbackNote || resolvedSampleNote,
+              sampleSupportReason: sampleResolution && sampleResolution.reason || ""
             });
           }
         }catch(_e){}
@@ -1895,7 +1917,7 @@ async function playSample(note, octave, durMs, opts={}){
             note: full,
             reason: "preload-timeout",
             handleState: "pending-handle-not-ready",
-            hasBuffer: !!((window.__pianoBufCache && window.__pianoBufCache.has(full)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(full))),
+            hasBuffer: !!((window.__pianoBufCache && window.__pianoBufCache.has(resolvedSampleNote)) || (typeof window.__getSharedPianoBuffer === "function" && window.__getSharedPianoBuffer(resolvedSampleNote))),
             route: "sample / webaudio",
             routeCandidate: "sample / webaudio",
             scheduledAudioTime: sampleMeta.scheduledAudioTime,
@@ -1903,7 +1925,11 @@ async function playSample(note, octave, durMs, opts={}){
             plannedTimeSec: sampleMeta.plannedTimeSec,
             songEventId: sampleMeta.songEventId,
             songNoteIndex: sampleMeta.songNoteIndex,
-            error: err && err.message ? err.message : String(err)
+            error: err && err.message ? err.message : String(err),
+            requestedSample: sampleResolution && sampleResolution.normalizedNote || full,
+            resolvedSample: resolvedSampleNote,
+            fallbackSample: sampleResolution && sampleResolution.fallbackNote || resolvedSampleNote,
+            sampleSupportReason: sampleResolution && sampleResolution.reason || ""
           });
         }catch(_e){}
       });
@@ -6195,6 +6221,7 @@ useBtn.addEventListener("click", () => {
 
   window.__playPianoSample = function(note, meta){
     try{ window.__logPlayPianoSampleEntry("__playPianoSample html enter", note, meta); }catch(_){ }
+    const sampleDebug = __getPianoSampleDebugFields(meta, note);
     const url = __noteUrl(note, meta);
     if (!url){
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
@@ -6203,7 +6230,8 @@ useBtn.addEventListener("click", () => {
         route: "sample / html audio",
         sourceId: meta && meta.sourceId ? String(meta.sourceId) : "",
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
+        ...sampleDebug
       }); }catch(_){ }
       return null;
     }
@@ -6235,7 +6263,8 @@ useBtn.addEventListener("click", () => {
           reason: "allow-audio-emit-blocked-html",
           route: "sample / html audio",
           songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-          songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+          songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
+          ...sampleDebug
         }); }catch(_){}
         return null;
       }
@@ -6271,7 +6300,8 @@ useBtn.addEventListener("click", () => {
         actualStartAudioTime: (window.audioCtx && Number.isFinite(Number(window.audioCtx.currentTime))) ? Number(window.audioCtx.currentTime) : null,
         activeSameNoteVoices: (window.__activeNoteVoices && window.__activeNoteVoices.get(note) && window.__activeNoteVoices.get(note).length) || 0,
         songVolume: gainInfo.songVolume,
-        finalGainAfterSongVolume: appliedGain
+        finalGainAfterSongVolume: appliedGain,
+        ...sampleDebug
       }); }catch(_){}
       try{ console.log("[live sample] __playPianoSample html", { note, url }); }catch(e){}
       return handle;
@@ -6283,7 +6313,8 @@ useBtn.addEventListener("click", () => {
         route: "sample / html audio",
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
         songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
-        error: e && e.message ? e.message : String(e)
+        error: e && e.message ? e.message : String(e),
+        ...sampleDebug
       }); }catch(_){}
       return handle;
     }
@@ -6426,78 +6457,112 @@ window.addEventListener("DOMContentLoaded", ()=>{
   }
   window.__describePianoSampleSupport = window.__describePianoSampleSupport || __describePianoSampleSupport;
 
-  function __noteUrl(note, meta){
-  if (meta && meta.sourceType === "song" && meta.sourceId === "ch:9") return "";
-  let n = String(note || "").trim();
-
-  // C#4 -> Cs4
-  n = n.replace(/([A-G])#(\d)/, "$1s$2");
-
-  // Db4/Eb4/Gb4/Ab4/Bb4 -> Cs/Ds/Fs/Gs/As に寄せる（あなたの音源名に合わせる）
-  n = n
-    .replace(/^Db(\d)$/,"Cs$1")
-    .replace(/^Eb(\d)$/,"Ds$1")
-    .replace(/^Gb(\d)$/,"Fs$1")
-    .replace(/^Ab(\d)$/,"Gs$1")
-    .replace(/^Bb(\d)$/,"As$1");
-
-  // オクターブ抽出して 3〜6 にクランプ
-  const m = /^([A-G])([s]?)(\d)$/.exec(n);
-  if (m){
-    const L = m[1];
-    const acc = m[2] || "";
-    let oct = parseInt(m[3], 10);
-    if (oct < 3) oct = 3;
-    if (oct > 6) oct = 6;
-    n = `${L}${acc}${oct}`;
+  function __resolvePianoSampleRequest(note, meta){
+    const requestedNote = String(note || "").trim();
+    if (meta && meta.sourceType === "song" && meta.sourceId === "ch:9"){
+      return {
+        requestedNote,
+        normalizedNote: requestedNote,
+        resolvedNote: "",
+        fallbackNote: "",
+        requestedOctave: null,
+        exactSampleInstalled: false,
+        clampedSampleInstalled: false,
+        reason: "drum-channel-no-piano-fallback",
+        url: ""
+      };
+    }
+    const support = (typeof window.__describePianoSampleSupport === "function")
+      ? window.__describePianoSampleSupport(requestedNote)
+      : null;
+    const normalizedNote = String(support && support.normalizedNote || requestedNote || "").trim();
+    const fallbackNote = String(support && support.clampedNote || normalizedNote || "").trim();
+    const requestedOctave = Number.isFinite(Number(support && support.requestedOctave)) ? Number(support.requestedOctave) : null;
+    const exactSampleInstalled = !!(support && support.exactSampleInstalled);
+    const clampedSampleInstalled = !!(support && support.clampedSampleInstalled);
+    const shouldClamp = Number.isFinite(requestedOctave) && (requestedOctave < 3 || requestedOctave > 6);
+    const resolvedNote = shouldClamp ? fallbackNote : normalizedNote;
+    return {
+      requestedNote,
+      normalizedNote,
+      resolvedNote,
+      fallbackNote,
+      requestedOctave,
+      exactSampleInstalled,
+      clampedSampleInstalled,
+      reason: String(support && support.reason || ""),
+      url: resolvedNote ? `assets/piano/${resolvedNote}.mp3` : ""
+    };
   }
 
-  return `assets/piano/${n}.mp3`;
-}
+  function __getPianoSampleDebugFields(meta, resolvedNote){
+    return {
+      requestedSample: String(meta && meta.requestedSample || meta && meta.note || ""),
+      resolvedSample: String(resolvedNote || meta && meta.resolvedSample || meta && meta.note || ""),
+      fallbackSample: String(meta && meta.fallbackSample || resolvedNote || meta && meta.note || ""),
+      sampleSupportReason: String(meta && meta.sampleSupportReason || "")
+    };
+  }
+  window.__resolvePianoSampleRequest = window.__resolvePianoSampleRequest || __resolvePianoSampleRequest;
+
+  function __noteUrl(note, meta){
+    const resolved = __resolvePianoSampleRequest(note, meta);
+    return resolved && typeof resolved.url === "string" ? resolved.url : "";
+  }
 
 
-  window.__preloadPianoBuffer = window.__preloadPianoBuffer || function(note){
+  window.__preloadPianoBuffer = window.__preloadPianoBuffer || function(note, meta){
     try{
+      const resolved = __resolvePianoSampleRequest(note, meta);
+      const requestedNote = String(resolved && resolved.normalizedNote || note || "").trim();
+      const resolvedNote = String(resolved && resolved.resolvedNote || requestedNote || "").trim();
+      if (!resolvedNote) return Promise.resolve(null);
       const ctx = window.ensureAudioCreated();
       if (!ctx) return null;
       // file:// では fetch/decode がCORSで失敗するので、静かにスキップ
       if (location && location.protocol === "file:") return Promise.resolve(null);
-      if (window.__pianoBufCache.has(note)) return Promise.resolve(window.__pianoBufCache.get(note));
-      const shared = __getSharedPianoBuffer(note);
+      if (window.__pianoBufCache.has(resolvedNote)) return Promise.resolve(window.__pianoBufCache.get(resolvedNote));
+      const shared = __getSharedPianoBuffer(resolvedNote);
       if (shared) return Promise.resolve(shared);
-      if (window.__pianoBufPromise.has(note)) return window.__pianoBufPromise.get(note);
-      const url = __noteUrl(note);
+      if (window.__pianoBufPromise.has(resolvedNote)) return window.__pianoBufPromise.get(resolvedNote);
+      const url = __noteUrl(resolvedNote, meta);
       const prom = Promise.resolve(
         (typeof window.__loadPianoSampleBuffer === "function")
-          ? window.__loadPianoSampleBuffer(note)
+          ? window.__loadPianoSampleBuffer(resolvedNote)
           : null
       )
         .then(entry => {
           const buf = entry && entry.ok && entry.buf ? entry.buf : null;
           if (!buf) return null;
-          window.__pianoBufCache.set(note, buf);
+          window.__pianoBufCache.set(resolvedNote, buf);
+          if (requestedNote && requestedNote !== resolvedNote) window.__pianoBufCache.set(requestedNote, buf);
           try{
-            if (window.sampleBufCache && !window.sampleBufCache.has(note)){
-              window.sampleBufCache.set(note, { buf, ok:true, url });
+            if (window.sampleBufCache && !window.sampleBufCache.has(resolvedNote)){
+              window.sampleBufCache.set(resolvedNote, { buf, ok:true, url });
+            }
+            if (window.sampleBufCache && requestedNote && requestedNote !== resolvedNote && !window.sampleBufCache.has(requestedNote)){
+              window.sampleBufCache.set(requestedNote, { buf, ok:true, url });
             }
           }catch(e){}
           return buf;
         })
         .catch(()=>null)
-        .finally(()=>{ window.__pianoBufPromise.delete(note); });
-      window.__pianoBufPromise.set(note, prom);
+        .finally(()=>{ window.__pianoBufPromise.delete(resolvedNote); });
+      window.__pianoBufPromise.set(resolvedNote, prom);
       return prom;
     }catch(e){ return null; }
   };
 
   function __playBufferNow(note, meta){
+    const sampleDebug = __getPianoSampleDebugFields(meta, note);
     if (window.__allowAudioEmit && !window.__allowAudioEmit(note, meta)){
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
         reason: "allow-audio-emit-blocked",
         route: "sample / webaudio",
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
+        ...sampleDebug
       }); }catch(_){}
       return null;
     }
@@ -6516,7 +6581,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
         handleState: "no-buffer-handle",
         hasBuffer: false,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
+        ...sampleDebug
       }); }catch(_){}
       return null;
     }
@@ -6531,7 +6597,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
         handleState: "invalid-buffer",
         hasBuffer: true,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
+        ...sampleDebug
       }); }catch(_){}
       return null;
     }
@@ -6586,7 +6653,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
         handleState: "buffer-ready",
         hasBuffer: true,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
+        ...sampleDebug
       }); }catch(_){ }
       src.start(startAt, trimSec);
       try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
@@ -6607,7 +6675,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
         currentAudioTime: nowCtx,
         handleState: "buffer-ready",
         hasBuffer: true,
-        routeCandidate: "sample / webaudio"
+        routeCandidate: "sample / webaudio",
+        ...sampleDebug
       }); }catch(_){}
 
       const via = (meta && meta.via) || "unknown";
@@ -6662,7 +6731,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
         hasBuffer: true,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
         songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
-        error: e && e.message ? e.message : String(e)
+        error: e && e.message ? e.message : String(e),
+        ...sampleDebug
       }); }catch(_){}
       return null;
     }
@@ -6716,57 +6786,67 @@ window.addEventListener("DOMContentLoaded", ()=>{
   // Override: play via AudioBuffer if ready, otherwise fallback to HTMLAudio pool
   window.__playPianoSample = function(note, meta){
     try{ window.__logPlayPianoSampleEntry("__playPianoSample enter", note, meta); }catch(_){ }
+    const resolved = __resolvePianoSampleRequest(note, meta);
+    const requestedNote = String(resolved && resolved.normalizedNote || note || "").trim();
+    const resolvedNote = String(resolved && resolved.resolvedNote || requestedNote || "").trim();
+    const playMeta = Object.assign({}, meta, {
+      requestedSample: requestedNote,
+      resolvedSample: resolvedNote,
+      fallbackSample: String(resolved && resolved.fallbackNote || resolvedNote || ""),
+      sampleSupportReason: String(resolved && resolved.reason || "")
+    });
     const isLiveInput = __safeIsLiveInputSampleMeta(meta);
     const isScheduledSong = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
     const shouldWaitForBuffer = __shouldMatchLiveInputSampleProfile(meta) || isScheduledSong;
     // If buffer ready, this is the fastest path
-    const h = __playBufferNow(note, meta);
+    const h = resolvedNote ? __playBufferNow(resolvedNote, playMeta) : null;
     if (h){
-      try{ console.log("[live sample] __playPianoSample buffer", { note }); }catch(e){}
-      return window.__normalizeLiveSampleHandle(h, meta);
+      try{ console.log("[live sample] __playPianoSample buffer", { note, requestedNote, resolvedNote, fallbackNote: resolved && resolved.fallbackNote || "", reason: resolved && resolved.reason || "" }); }catch(e){}
+      return window.__normalizeLiveSampleHandle(h, playMeta);
     }
     // Live input keeps a stop-capable handle and waits for the stop-safe path first.
     if (shouldWaitForBuffer){
       const pending = window.__normalizeLiveSampleHandle({
         type: "pending",
-        note,
-        __note: (meta && meta.note) || note,
-        __sample: note,
-        __via: meta && meta.via,
+        note: resolvedNote || note,
+        __note: (playMeta && playMeta.note) || resolvedNote || note,
+        __sample: resolvedNote || note,
+        __via: playMeta && playMeta.via,
         __liveRoute: "sample / webaudio",
         __pendingStart: true,
         __pendingStartSource: "buffer-load"
-      }, meta);
+      }, playMeta);
       pending.__readyPromise = Promise.resolve()
-        .then(() => window.__preloadPianoBuffer(note))
+        .then(() => resolvedNote ? window.__preloadPianoBuffer(resolvedNote, playMeta) : null)
         .then(buf => {
           let resolved = null;
-          if (buf) resolved = __playBufferNow(note, meta);
+          if (buf && resolvedNote) resolved = __playBufferNow(resolvedNote, playMeta);
           if (!resolved){
-            if (meta && meta.sourceType === "song" && meta.sourceId === "ch:9"){
+            if (playMeta && playMeta.sourceType === "song" && playMeta.sourceId === "ch:9"){
               try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
-                note,
+                note: resolvedNote || note,
                 reason: "drum-channel-no-piano-fallback",
                 route: "sample / html audio",
-                sourceId: String(meta.sourceId || ""),
-                songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-                songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+                sourceId: String(playMeta.sourceId || ""),
+                songEventId: playMeta && playMeta.songEventId ? String(playMeta.songEventId) : "",
+                songNoteIndex: Number.isFinite(Number(playMeta && playMeta.songNoteIndex)) ? Number(playMeta.songNoteIndex) : null,
+                ...__getPianoSampleDebugFields(playMeta, resolvedNote || note)
               }); }catch(_){ }
             }else{
-              const htmlResolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
-              resolved = __wrapLiveHtmlAudioHandle(htmlResolved, note, meta, {
+              const htmlResolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(resolvedNote || note, playMeta);
+              resolved = __wrapLiveHtmlAudioHandle(htmlResolved, resolvedNote || note, playMeta, {
                 __wrappedFromHtmlFallback: true
               });
             }
           }
-          resolved = window.__normalizeLiveSampleHandle(resolved, meta);
+          resolved = window.__normalizeLiveSampleHandle(resolved, playMeta);
           if (!resolved || resolved.type === "pending") return null;
-          const adopted = __adoptLiveSampleHandle(pending, resolved, meta);
-          return __resolveLiveSampleHandle(adopted || pending, note, meta) || __resolveLiveSampleHandle(pending, note, meta);
+          const adopted = __adoptLiveSampleHandle(pending, resolved, playMeta);
+          return __resolveLiveSampleHandle(adopted || pending, resolvedNote || note, playMeta) || __resolveLiveSampleHandle(pending, resolvedNote || note, playMeta);
         })
         .then(handle => {
           pending.__pendingStart = false;
-          const liveHandle = __resolveLiveSampleHandle(handle || pending, note, meta) || __resolveLiveSampleHandle(pending, note, meta);
+          const liveHandle = __resolveLiveSampleHandle(handle || pending, resolvedNote || note, playMeta) || __resolveLiveSampleHandle(pending, resolvedNote || note, playMeta);
           return (liveHandle && liveHandle.type !== "pending") ? liveHandle : null;
         })
         .catch(() => {
@@ -6776,19 +6856,20 @@ window.addEventListener("DOMContentLoaded", ()=>{
       return pending;
     }
     // If not ready yet, kick decode and fallback immediately
-    try{ window.__preloadPianoBuffer(note); }catch(e){}
-    if (meta && meta.sourceType === "song" && meta.sourceId === "ch:9"){
+    try{ if (resolvedNote) window.__preloadPianoBuffer(resolvedNote, playMeta); }catch(e){}
+    if (playMeta && playMeta.sourceType === "song" && playMeta.sourceId === "ch:9"){
       try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
-        note,
+        note: resolvedNote || note,
         reason: "drum-channel-no-piano-fallback",
         route: "sample / html audio",
-        sourceId: String(meta.sourceId || ""),
-        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+        sourceId: String(playMeta.sourceId || ""),
+        songEventId: playMeta && playMeta.songEventId ? String(playMeta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(playMeta && playMeta.songNoteIndex)) ? Number(playMeta.songNoteIndex) : null,
+        ...__getPianoSampleDebugFields(playMeta, resolvedNote || note)
       }); }catch(_){ }
       return null;
     }
-    try{ return window.__normalizeLiveSampleHandle(window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta), meta); }catch(e){}
+    try{ return window.__normalizeLiveSampleHandle(window.__playPianoSample_HTML && window.__playPianoSample_HTML(resolvedNote || note, playMeta), playMeta); }catch(e){}
   };
 
   // One-time audio unlock on first gesture anywhere (resume + silent tick)
