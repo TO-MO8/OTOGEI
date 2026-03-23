@@ -1722,6 +1722,9 @@ async function playSample(note, octave, durMs, opts={}){
   const reqOct = Number(octave)||4;
   const n = String(note||"").replace(/♯/g,"#");
   const full = (n.replace(/#/g,"s")) + String(reqOct);
+  const sampleSupport = (typeof window.__describePianoSampleSupport === "function")
+    ? window.__describePianoSampleSupport(full)
+    : null;
 
   const allowed = window.__PIANO_ALLOWED__;
   const isSongPlaybackRequest = opts && opts.sourceType === "song";
@@ -1827,6 +1830,11 @@ async function playSample(note, octave, durMs, opts={}){
       durMs: sampleMeta.durMs,
       autoStopFadeMs,
       matchLiveInputSample,
+      requestedSample: sampleSupport && sampleSupport.normalizedNote || full,
+      fallbackSample: sampleSupport && sampleSupport.clampedNote || full,
+      sampleSupportReason: sampleSupport && sampleSupport.reason || "",
+      exactSampleInstalled: !!(sampleSupport && sampleSupport.exactSampleInstalled),
+      clampedSampleInstalled: !!(sampleSupport && sampleSupport.clampedSampleInstalled),
       plannedTimeSec: sampleMeta.plannedTimeSec,
       scheduledAudioTime: sampleMeta.scheduledAudioTime,
       routeCandidate: "sample",
@@ -4964,6 +4972,9 @@ return trSources[0]?.id || sources[0].id;
         playCallNoStartSeen: false,
         playCallNoStartReason: "",
         playCallNoStartReasonCounts: Object.create(null),
+        sampleSupportReason: "",
+        requestedSample: "",
+        fallbackSample: "",
         lastPlayCallNoStartDetail: null,
         lastScheduledAudioTime: null,
         lastCurrentAudioTime: null,
@@ -5023,7 +5034,9 @@ return trSources[0]?.id || sources[0].id;
   }
   function __normalizeSongPlayCallNoStartReason(reason, detail){
     const raw = String(reason || "").trim();
+    const sampleSupportReason = String(detail && detail.sampleSupportReason || "").trim();
     if (!raw) return "playcall-no-start";
+    if (sampleSupportReason && (raw === "playcall-no-start" || raw === "play-returned-null" || raw === "buffer-missing-at-start" || raw === "pending-handle-not-ready" || raw === "route-aborted-before-start")) return sampleSupportReason;
     if (raw === "no-buffer-handle" || raw === "pending-handle-not-ready" || raw === "preload-timeout" || raw === "invalid-buffer" || raw === "source-start-threw" || raw === "scheduled-time-already-past" || raw === "token-stopped-after-playcall" || raw === "route-aborted-before-start") return raw;
     if (raw === "buffer-missing-at-start" || raw === "play-returned-null") return "no-buffer-handle";
     if (raw === "song-preload-rejected") return "preload-timeout";
@@ -5056,7 +5069,10 @@ return trSources[0]?.id || sources[0].id;
       handleState: String(detail && detail.handleState || noteState.lastHandleState || ""),
       hasBuffer: (detail && typeof detail.hasBuffer === "boolean") ? detail.hasBuffer : noteState.lastHasBuffer,
       routeCandidate: String(detail && detail.routeCandidate || detail && detail.route || noteState.lastStartRoute || noteState.routeCandidate || ""),
-      playCallNoStartReason: normalizedReason
+      playCallNoStartReason: normalizedReason,
+      sampleSupportReason: String(detail && detail.sampleSupportReason || noteState.sampleSupportReason || ""),
+      requestedSample: String(detail && detail.requestedSample || noteState.requestedSample || ""),
+      fallbackSample: String(detail && detail.fallbackSample || noteState.fallbackSample || "")
     };
     return normalizedReason;
   }
@@ -5372,7 +5388,7 @@ return trSources[0]?.id || sources[0].id;
           const skippedBeforePlayCall = (!started && Number(noteState.skippedBeforePlayCallCount || 0) > 0) ? 1 : 0;
           const terminalReason = __deriveSongPlaybackTerminalReason(noteState);
           const skipReason = String(noteState.lastSkipReason || noteState.primarySkipReason || "");
-          const playCallNoStartReason = String(noteState.playCallNoStartReason || "");
+          const playCallNoStartReason = String(noteState.playCallNoStartReason || noteState.sampleSupportReason || "");
           noteState.terminalReason = terminalReason;
           if (started) primaryStartedEventCount += 1;
           if (started && noteState.secondaryDropAfterPrimarySeen) secondaryDropAfterPrimaryCount += 1;
@@ -5400,7 +5416,9 @@ return trSources[0]?.id || sources[0].id;
             terminalReason,
             playCallNoStartReason,
             playCallNoStartReasonCounts: Object.assign({}, noteState.playCallNoStartReasonCounts || {}),
-            routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
+            routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || ""),
+            requestedSample: String(noteState.requestedSample || ""),
+            fallbackSample: String(noteState.fallbackSample || "")
           };
           if (!started && missingStartsSample.length < 20){
             missingStartsSample.push({
@@ -5411,7 +5429,9 @@ return trSources[0]?.id || sources[0].id;
               playCallNoStartReason,
               skipReason,
               skipReasonCounts: Object.assign({}, noteState.skipReasonCounts || {}),
-              routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || "")
+              routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || ""),
+              requestedSample: String(noteState.requestedSample || ""),
+              fallbackSample: String(noteState.fallbackSample || "")
             });
           }
         });
@@ -5548,6 +5568,9 @@ return trSources[0]?.id || sources[0].id;
         if (Number.isFinite(Number(payload.plannedTimeSec))) noteState.plannedTimeSec = Number(payload.plannedTimeSec);
         if (payload.routeCandidate) noteState.routeCandidate = String(payload.routeCandidate);
         if (payload.route) noteState.routeCandidate = String(payload.route);
+        if (payload.sampleSupportReason) noteState.sampleSupportReason = String(payload.sampleSupportReason);
+        if (payload.requestedSample) noteState.requestedSample = String(payload.requestedSample);
+        if (payload.fallbackSample) noteState.fallbackSample = String(payload.fallbackSample);
       }
       if (noteState){
         if (Number.isFinite(Number(payload.scheduledAudioTime))) noteState.lastScheduledAudioTime = Number(payload.scheduledAudioTime);
@@ -5563,6 +5586,7 @@ return trSources[0]?.id || sources[0].id;
       }else if (key === "playCall" && noteState){
         noteState.playCallCount = Number(noteState.playCallCount || 0) + 1;
         if (!noteState.routeCandidate) noteState.routeCandidate = "sample";
+        if (!noteState.playCallNoStartReason && noteState.sampleSupportReason) noteState.playCallNoStartReason = String(noteState.sampleSupportReason);
       }else if (key === "skip" && noteState){
         noteState.skipCount = Number(noteState.skipCount || 0) + 1;
         const normalizedSkipReason = __normalizeSongSkipReason(payload.reason, payload);
@@ -6355,6 +6379,52 @@ window.addEventListener("DOMContentLoaded", ()=>{
       return { note, trimMs };
     });
   };
+
+  function __describePianoSampleSupport(note){
+    const raw = String(note || "").trim();
+    const normalized = raw
+      .replace(/♯/g, "#")
+      .replace(/^Db/i, "C#")
+      .replace(/^Eb/i, "D#")
+      .replace(/^Gb/i, "F#")
+      .replace(/^Ab/i, "G#")
+      .replace(/^Bb/i, "A#")
+      .replace(/#/g, "s");
+    const m = /^([A-G](?:s)?)(-?\d+)$/.exec(normalized);
+    if (!m){
+      return {
+        requestedNote: raw,
+        normalizedNote: normalized,
+        requestedOctave: null,
+        clampedNote: normalized,
+        exactSampleInstalled: false,
+        clampedSampleInstalled: false,
+        reason: "unsupported-note-format"
+      };
+    }
+    const name = m[1];
+    const requestedOctave = Number(m[2]);
+    const clampedOctave = Math.max(3, Math.min(6, requestedOctave));
+    const clampedNote = `${name}${clampedOctave}`;
+    const allowed = window.__PIANO_ALLOWED__;
+    const exactSampleInstalled = !!(allowed && typeof allowed.has === "function" && allowed.has(normalized));
+    const clampedSampleInstalled = !!(allowed && typeof allowed.has === "function" && allowed.has(clampedNote));
+    let reason = "";
+    if (!Number.isFinite(requestedOctave)) reason = "unsupported-note-format";
+    else if (requestedOctave < 3) reason = "low-note-unsupported";
+    else if (requestedOctave > 6) reason = "out-of-range";
+    else if (!exactSampleInstalled) reason = "sample-not-installed";
+    return {
+      requestedNote: raw,
+      normalizedNote: normalized,
+      requestedOctave,
+      clampedNote,
+      exactSampleInstalled,
+      clampedSampleInstalled,
+      reason
+    };
+  }
+  window.__describePianoSampleSupport = window.__describePianoSampleSupport || __describePianoSampleSupport;
 
   function __noteUrl(note, meta){
   if (meta && meta.sourceType === "song" && meta.sourceId === "ch:9") return "";
