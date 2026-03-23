@@ -2538,6 +2538,11 @@ async function playNoteOut(note, durMs, opts={}){
     if (!masterOn) return true;
     unlockAudio();
 
+    opts = opts || {};
+    if (opts.sourceType === "question" && !opts.matchLiveInputSample){
+      opts = Object.assign({}, opts, { matchLiveInputSample:true });
+    }
+
     const { name: noteName, octave: useOct } = normalizeNoteInput(note, octave);
     const emitNote = `${noteName}${useOct}`;
     if (opts && opts.sourceType === "song"){
@@ -6621,7 +6626,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     try{ window.__logPlayPianoSampleEntry("__playPianoSample enter", note, meta); }catch(_){ }
     const isLiveInput = __safeIsLiveInputSampleMeta(meta);
     const isScheduledSong = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
-    const shouldWaitForBuffer = isLiveInput || isScheduledSong;
+    const shouldWaitForBuffer = __shouldMatchLiveInputSampleProfile(meta) || isScheduledSong;
     // If buffer ready, this is the fastest path
     const h = __playBufferNow(note, meta);
     if (h){
