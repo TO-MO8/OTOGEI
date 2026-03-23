@@ -6496,6 +6496,222 @@ window.addEventListener("DOMContentLoaded", ()=>{
     };
   }
 
+  function __sampleDebugNoteToMidi(note){
+    const raw = String(note || "").trim();
+    const normalized = raw
+      .replace(/♯/g, "#")
+      .replace(/^Db/i, "C#")
+      .replace(/^Eb/i, "D#")
+      .replace(/^Gb/i, "F#")
+      .replace(/^Ab/i, "G#")
+      .replace(/^Bb/i, "A#")
+      .replace(/s/g, "#");
+    const m = /^([A-G](?:#)?)(-?\d+)$/.exec(normalized);
+    if (!m) return null;
+    const octave = Number(m[2]);
+    if (!Number.isFinite(octave) || typeof midiFromNote !== "function") return null;
+    try{ return midiFromNote(m[1], octave); }catch(_e){}
+    return null;
+  }
+
+  function __sampleDebugSourceLabel(sourceId){
+    const id = String(sourceId || "");
+    if (!id) return "";
+    if (id === "all-ch" || id === "all") return "ALL channels";
+    if (id.startsWith("ch:")){
+      const ch = parseInt(id.slice(3), 10);
+      return Number.isFinite(ch) ? `Ch ${ch+1}（内部 ch:${ch}）` : id;
+    }
+    return id;
+  }
+
+  function __sampleDebugBuildAllChannelSong(parsed){
+    const tracks = Array.isArray(parsed && parsed.tracks) ? parsed.tracks : [];
+    const merged = [];
+    tracks.forEach(track => {
+      const src = (track && Array.isArray(track.notes) && track.notes.length)
+        ? track.notes
+        : ((track && Array.isArray(track.noteOns)) ? track.noteOns : []);
+      src.forEach(item => {
+        if (!item) return;
+        merged.push({
+          tick: Number(item.tick) || 0,
+          note: Number(item.note),
+          durTick: Number.isFinite(Number(item.durTick)) ? Number(item.durTick) : null,
+          ch: item.ch
+        });
+      });
+    });
+    if (!merged.length) throw new Error("全chにノートがありません");
+    merged.sort((a, b)=> (a.tick - b.tick) || (a.note - b.note));
+    const fake = { index: -1, name: "ALL channels", notes: merged, noteOns: merged };
+    return buildSongFromTrack({ ...parsed, tracks: [fake] }, -1);
+  }
+
+  function __collectPianoSampleResolutionStats(sourceId, opts){
+    const parsed = (opts && opts.parsed) || window.__parsed;
+    if (!parsed) throw new Error("先にMIDIを読み込んでください");
+    const resolvedSourceId = String(sourceId || "");
+    const statsSourceId = resolvedSourceId || String(opts && opts.sourceId || "");
+    let notes = [];
+    if (statsSourceId === "all-ch" || statsSourceId === "all"){
+      notes = __sampleDebugBuildAllChannelSong(parsed);
+    } else {
+      notes = buildSongFromSource(parsed, statsSourceId);
+    }
+    const shiftPc = Number.isFinite(Number(opts && opts.shiftPc))
+      ? Number(opts.shiftPc)
+      : ((statsSourceId === "ch:9") ? 0 : Number(window.songShiftPc || 0));
+    const sourceLabel = __sampleDebugSourceLabel(statsSourceId);
+    const requestedCounts = new Map();
+    const resolvedCounts = new Map();
+    const fallbackCounts = new Map();
+    const chainCounts = new Map();
+    const collisions = new Map();
+    const rows = [];
+    notes.forEach((item, index) => {
+      const playNote = window.__songItemToPlayNote
+        ? window.__songItemToPlayNote(item, shiftPc)
+        : { n: item && item.n, o: item && item.o };
+      const requested = `${playNote.n}${playNote.o}`.replace(/#/g, "s");
+      const resolved = __resolvePianoSampleRequest(requested, { sourceType:"song", sourceId:statsSourceId });
+      const row = {
+        index,
+        requestedNote: String(resolved && resolved.requestedNote || requested || ""),
+        normalizedNote: String(resolved && resolved.normalizedNote || requested || ""),
+        resolvedNote: String(resolved && resolved.resolvedNote || ""),
+        fallbackNote: String(resolved && resolved.fallbackNote || ""),
+        reason: String(resolved && resolved.reason || ""),
+        requestedMidi: __sampleDebugNoteToMidi(resolved && resolved.requestedNote || requested || ""),
+        resolvedMidi: __sampleDebugNoteToMidi(resolved && resolved.resolvedNote || ""),
+        fallbackMidi: __sampleDebugNoteToMidi(resolved && resolved.fallbackNote || "")
+      };
+      rows.push(row);
+      requestedCounts.set(row.requestedNote, (requestedCounts.get(row.requestedNote) || 0) + 1);
+      resolvedCounts.set(row.resolvedNote, (resolvedCounts.get(row.resolvedNote) || 0) + 1);
+      fallbackCounts.set(row.fallbackNote, (fallbackCounts.get(row.fallbackNote) || 0) + 1);
+      const chainKey = `${row.requestedNote} -> ${row.resolvedNote} -> ${row.fallbackNote}`;
+      chainCounts.set(chainKey, (chainCounts.get(chainKey) || 0) + 1);
+      if (!collisions.has(row.resolvedNote)){
+        collisions.set(row.resolvedNote, {
+          resolvedNote: row.resolvedNote,
+          requestedNotes: new Set(),
+          fallbackNotes: new Set(),
+          reasons: new Set(),
+          totalCount: 0,
+          minRequestedMidi: null,
+          maxRequestedMidi: null
+        });
+      }
+      const collision = collisions.get(row.resolvedNote);
+      collision.requestedNotes.add(row.requestedNote);
+      if (row.fallbackNote) collision.fallbackNotes.add(row.fallbackNote);
+      if (row.reason) collision.reasons.add(row.reason);
+      collision.totalCount += 1;
+      if (Number.isFinite(row.requestedMidi)){
+        collision.minRequestedMidi = (collision.minRequestedMidi == null) ? row.requestedMidi : Math.min(collision.minRequestedMidi, row.requestedMidi);
+        collision.maxRequestedMidi = (collision.maxRequestedMidi == null) ? row.requestedMidi : Math.max(collision.maxRequestedMidi, row.requestedMidi);
+      }
+    });
+    const collisionList = Array.from(collisions.values())
+      .filter(item => item.requestedNotes.size > 1)
+      .map(item => ({
+        resolvedNote: item.resolvedNote,
+        totalCount: item.totalCount,
+        distinctRequested: item.requestedNotes.size,
+        requestedNotes: Array.from(item.requestedNotes).sort((a, b)=> (__sampleDebugNoteToMidi(a) ?? 0) - (__sampleDebugNoteToMidi(b) ?? 0)),
+        fallbackNotes: Array.from(item.fallbackNotes).sort((a, b)=> (__sampleDebugNoteToMidi(a) ?? 0) - (__sampleDebugNoteToMidi(b) ?? 0)),
+        reasons: Array.from(item.reasons).sort(),
+        requestedMidiRange: (item.minRequestedMidi != null && item.maxRequestedMidi != null)
+          ? [item.minRequestedMidi, item.maxRequestedMidi]
+          : []
+      }))
+      .sort((a, b)=> (b.distinctRequested - a.distinctRequested) || (b.totalCount - a.totalCount) || ((__sampleDebugNoteToMidi(a.resolvedNote) ?? 0) - (__sampleDebugNoteToMidi(b.resolvedNote) ?? 0)));
+    const sortedByRequested = rows.slice().sort((a, b)=> {
+      const am = Number.isFinite(a.requestedMidi) ? a.requestedMidi : Number.POSITIVE_INFINITY;
+      const bm = Number.isFinite(b.requestedMidi) ? b.requestedMidi : Number.POSITIVE_INFINITY;
+      if (am !== bm) return am - bm;
+      return a.index - b.index;
+    });
+    const lowEdge = sortedByRequested.slice(0, Math.min(12, sortedByRequested.length));
+    const highEdge = sortedByRequested.slice(Math.max(0, sortedByRequested.length - 12));
+    const highClampRows = sortedByRequested.filter(row => row.reason === "out-of-range" || (row.requestedMidi != null && row.resolvedMidi != null && row.requestedMidi > row.resolvedMidi));
+    const lowClampRows = sortedByRequested.filter(row => row.reason === "low-note-unsupported" || (row.requestedMidi != null && row.resolvedMidi != null && row.requestedMidi < row.resolvedMidi));
+    const chainSummary = Array.from(chainCounts.entries())
+      .map(([chain, count]) => ({ chain, count }))
+      .sort((a, b)=> (b.count - a.count) || a.chain.localeCompare(b.chain))
+      .slice(0, 40);
+    const result = {
+      sourceId: statsSourceId,
+      sourceLabel,
+      noteCount: rows.length,
+      requestedCounts: Array.from(requestedCounts.entries()).map(([note, count]) => ({ note, count })).sort((a, b)=> ((__sampleDebugNoteToMidi(a.note) ?? 0) - (__sampleDebugNoteToMidi(b.note) ?? 0))),
+      resolvedCounts: Array.from(resolvedCounts.entries()).map(([note, count]) => ({ note, count })).sort((a, b)=> ((__sampleDebugNoteToMidi(a.note) ?? 0) - (__sampleDebugNoteToMidi(b.note) ?? 0))),
+      fallbackCounts: Array.from(fallbackCounts.entries()).map(([note, count]) => ({ note, count })).sort((a, b)=> ((__sampleDebugNoteToMidi(a.note) ?? 0) - (__sampleDebugNoteToMidi(b.note) ?? 0))),
+      chainSummary,
+      collisions: collisionList,
+      lowEdge,
+      highEdge,
+      highClampRows,
+      lowClampRows,
+      rows
+    };
+    try{
+      console.groupCollapsed(`[sample resolution stats] ${sourceLabel || statsSourceId || "unknown"} count=${result.noteCount}`);
+      console.table(result.chainSummary);
+      if (result.collisions.length) console.table(result.collisions.map(item => ({
+        resolvedNote: item.resolvedNote,
+        totalCount: item.totalCount,
+        distinctRequested: item.distinctRequested,
+        requestedNotes: item.requestedNotes.join(", "),
+        reasons: item.reasons.join(", ")
+      })));
+      console.table(result.lowEdge.map(row => ({
+        requestedNote: row.requestedNote,
+        resolvedNote: row.resolvedNote,
+        fallbackNote: row.fallbackNote,
+        reason: row.reason
+      })));
+      console.table(result.highEdge.map(row => ({
+        requestedNote: row.requestedNote,
+        resolvedNote: row.resolvedNote,
+        fallbackNote: row.fallbackNote,
+        reason: row.reason
+      })));
+      if (result.highClampRows.length){
+        console.table(result.highClampRows.map(row => ({
+          requestedNote: row.requestedNote,
+          resolvedNote: row.resolvedNote,
+          fallbackNote: row.fallbackNote,
+          reason: row.reason
+        })));
+      }
+      console.groupEnd();
+    }catch(_e){}
+    return result;
+  }
+  window.__collectPianoSampleResolutionStats = window.__collectPianoSampleResolutionStats || __collectPianoSampleResolutionStats;
+
+  window.__dumpPianoSampleResolutionStats = window.__dumpPianoSampleResolutionStats || function(sourceIds, opts){
+    const requested = Array.isArray(sourceIds) ? sourceIds.slice() : (sourceIds ? [sourceIds] : []);
+    const parsed = (opts && opts.parsed) || window.__parsed;
+    if (!parsed) throw new Error("先にMIDIを読み込んでください");
+    const targets = requested.length ? requested : ["ch:2", "ch:3", "all-ch"];
+    const out = targets.map(sourceId => {
+      try{
+        return __collectPianoSampleResolutionStats(sourceId, opts);
+      }catch(err){
+        return {
+          sourceId: String(sourceId || ""),
+          sourceLabel: __sampleDebugSourceLabel(sourceId),
+          error: String(err && err.message || err || "")
+        };
+      }
+    });
+    try{ console.log("[sample resolution stats summary]", out); }catch(_e){}
+    return out;
+  };
+
   function __getPianoSampleDebugFields(meta, resolvedNote){
     return {
       requestedSample: String(meta && meta.requestedSample || meta && meta.note || ""),
