@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260323-032"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260323-033"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -6466,8 +6466,12 @@ window.addEventListener("DOMContentLoaded", ()=>{
         requestedNote,
         normalizedNote: requestedNote,
         resolvedNote: "",
+        sourceSampleNote: "",
         fallbackNote: "",
         requestedOctave: null,
+        requestedMidi: null,
+        sourceMidi: null,
+        playbackRate: 1,
         exactSampleInstalled: false,
         clampedSampleInstalled: false,
         reason: "drum-channel-no-piano-fallback",
@@ -6480,20 +6484,39 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const normalizedNote = String(support && support.normalizedNote || requestedNote || "").trim();
     const fallbackNote = String(support && support.clampedNote || normalizedNote || "").trim();
     const requestedOctave = Number.isFinite(Number(support && support.requestedOctave)) ? Number(support.requestedOctave) : null;
+    const requestedMidi = __sampleDebugNoteToMidi(normalizedNote);
+    const lowPlaybackRateTargets = new Set([40, 41, 42, 45, 47]); // E2 / F2 / Fs2 / A2 / B2
     const exactSampleInstalled = !!(support && support.exactSampleInstalled);
     const clampedSampleInstalled = !!(support && support.clampedSampleInstalled);
     const shouldClamp = Number.isFinite(requestedOctave) && (requestedOctave < 3 || requestedOctave > 6);
-    const resolvedNote = shouldClamp ? fallbackNote : normalizedNote;
+    const sourceSampleNote = shouldClamp ? fallbackNote : normalizedNote;
+    const sourceMidi = __sampleDebugNoteToMidi(sourceSampleNote);
+    const shouldUsePlaybackRate = (
+      !exactSampleInstalled &&
+      requestedOctave < 3 &&
+      Number.isFinite(requestedMidi) &&
+      lowPlaybackRateTargets.has(requestedMidi) &&
+      Number.isFinite(sourceMidi) &&
+      sourceMidi > 0
+    );
+    const playbackRate = shouldUsePlaybackRate
+      ? Math.pow(2, (requestedMidi - sourceMidi) / 12)
+      : 1;
+    const resolvedNote = sourceSampleNote;
     return {
       requestedNote,
       normalizedNote,
       resolvedNote,
+      sourceSampleNote,
       fallbackNote,
       requestedOctave,
+      requestedMidi,
+      sourceMidi,
+      playbackRate,
       exactSampleInstalled,
       clampedSampleInstalled,
       reason: String(support && support.reason || ""),
-      url: resolvedNote ? `assets/piano/${resolvedNote}.mp3` : ""
+      url: sourceSampleNote ? `assets/piano/${sourceSampleNote}.mp3` : ""
     };
   }
 
@@ -6826,8 +6849,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
   function __getPianoSampleDebugFields(meta, resolvedNote){
     return {
       requestedSample: String(meta && meta.requestedSample || meta && meta.note || ""),
+      sourceSample: String(meta && meta.sourceSample || resolvedNote || meta && meta.resolvedSample || meta && meta.note || ""),
       resolvedSample: String(resolvedNote || meta && meta.resolvedSample || meta && meta.note || ""),
       fallbackSample: String(meta && meta.fallbackSample || resolvedNote || meta && meta.note || ""),
+      playbackRate: Number.isFinite(Number(meta && meta.playbackRate)) ? Number(meta.playbackRate) : 1,
       sampleSupportReason: String(meta && meta.sampleSupportReason || "")
     };
   }
@@ -6933,6 +6958,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     try{
       const src = ctx.createBufferSource();
       src.buffer = buf;
+      try{ src.playbackRate.value = Number(meta && meta.playbackRate) || 1; }catch(e){}
 
       const g = ctx.createGain();
       const nowCtx = ctx.currentTime;
@@ -7116,11 +7142,14 @@ window.addEventListener("DOMContentLoaded", ()=>{
     try{ window.__logPlayPianoSampleEntry("__playPianoSample enter", note, meta); }catch(_){ }
     const resolved = __resolvePianoSampleRequest(note, meta);
     const requestedNote = String(resolved && resolved.normalizedNote || note || "").trim();
-    const resolvedNote = String(resolved && resolved.resolvedNote || requestedNote || "").trim();
+    const sourceSampleNote = String(resolved && resolved.sourceSampleNote || resolved && resolved.resolvedNote || requestedNote || "").trim();
+    const resolvedNote = String(resolved && resolved.resolvedNote || sourceSampleNote || requestedNote || "").trim();
     const playMeta = Object.assign({}, meta, {
       requestedSample: requestedNote,
+      sourceSample: sourceSampleNote,
       resolvedSample: resolvedNote,
       fallbackSample: String(resolved && resolved.fallbackNote || resolvedNote || ""),
+      playbackRate: Number.isFinite(Number(resolved && resolved.playbackRate)) ? Number(resolved.playbackRate) : 1,
       sampleSupportReason: String(resolved && resolved.reason || "")
     });
     const isLiveInput = __safeIsLiveInputSampleMeta(meta);
@@ -7129,7 +7158,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     // If buffer ready, this is the fastest path
     const h = resolvedNote ? __playBufferNow(resolvedNote, playMeta) : null;
     if (h){
-      try{ console.log("[live sample] __playPianoSample buffer", { note, requestedNote, resolvedNote, fallbackNote: resolved && resolved.fallbackNote || "", reason: resolved && resolved.reason || "" }); }catch(e){}
+      try{ console.log("[live sample] __playPianoSample buffer", { note, requestedNote, sourceSample: sourceSampleNote, resolvedNote, playbackRate: playMeta.playbackRate, fallbackNote: resolved && resolved.fallbackNote || "", reason: resolved && resolved.reason || "" }); }catch(e){}
       return window.__normalizeLiveSampleHandle(h, playMeta);
     }
     // Live input keeps a stop-capable handle and waits for the stop-safe path first.
