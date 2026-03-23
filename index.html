@@ -1710,6 +1710,14 @@ async function playSample(note, octave, durMs, opts={}){
   if (soundMode !== "sample") return false;
   if (!masterOn) return true;
   if (!__allowAudioEmit(`${note}${octave}`, opts)) return true;
+  if (opts && opts.sourceType === "song" && opts.sourceId === "ch:9"){
+    try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
+      note: `${note}${octave}`,
+      reason: "unsupported-drum-source-silent",
+      sourceId: String(opts.sourceId || "")
+    }); }catch(_e){}
+    return true;
+  }
 
   const reqOct = Number(octave)||4;
   const n = String(note||"").replace(/♯/g,"#");
@@ -1805,7 +1813,8 @@ async function playSample(note, octave, durMs, opts={}){
       autoStopFadeMs: Number.isFinite(Number(durMs)) ? autoStopFadeMs : null,
       plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
       songStartAudioTime: Number.isFinite(Number(opts.songStartAudioTime)) ? Number(opts.songStartAudioTime) : null,
-      scheduledAudioTime: Number.isFinite(Number(opts.scheduledAudioTime)) ? Number(opts.scheduledAudioTime) : null
+      scheduledAudioTime: Number.isFinite(Number(opts.scheduledAudioTime)) ? Number(opts.scheduledAudioTime) : null,
+      sourceId: opts.sourceId != null ? String(opts.sourceId) : ""
     };
     try{ if (isSongPlayback && sampleMeta.songEventId) __traceSongEventId("playSample", {
       songEventId: sampleMeta.songEventId,
@@ -5883,7 +5892,7 @@ function __registerTrackAsSong(sourceId){
         const __shift = (String(sourceId) === "ch:9") ? 0 : songShiftPc;
         const playNote = window.__songItemToPlayNote(noteObj, __shift);
         if (runId !== __getPreviewRunId()) break;
-        await window.playNoteOut(playNote, dur, { sourceType:"song", token:songToken, matchLiveInputSample:true }); // note length (sound)
+        await window.playNoteOut(playNote, dur, { sourceType:"song", sourceId, token:songToken, matchLiveInputSample:true }); // note length (sound)
         if (runId !== __getPreviewRunId()) break;
         const gapMs = Math.max(10, Math.round(__ticksToMs(nn.__tick, nn.__tick + gapTick, tempoMap, __parsed.ticksPerBeat, __parsed.ticksPerSecond)));
         const stillActive = await __songPlaybackSleep(runId, gapMs); // spacing (rhythm)
@@ -5984,7 +5993,8 @@ async function __playAllFromTrack(runId, songToken){
           matchLiveInputSample:true,
           plannedTimeSec,
           songStartAudioTime,
-          scheduledAudioTime: Number.isFinite(songStartAudioTime) ? (songStartAudioTime + plannedTimeSec) : null
+          scheduledAudioTime: Number.isFinite(songStartAudioTime) ? (songStartAudioTime + plannedTimeSec) : null,
+          sourceId
         });
       }
     }catch(e){
@@ -6161,10 +6171,21 @@ useBtn.addEventListener("click", () => {
 
   window.__playPianoSample = function(note, meta){
     try{ window.__logPlayPianoSampleEntry("__playPianoSample html enter", note, meta); }catch(_){ }
+    const url = __noteUrl(note, meta);
+    if (!url){
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
+        note,
+        reason: "drum-channel-no-piano-fallback",
+        route: "sample / html audio",
+        sourceId: meta && meta.sourceId ? String(meta.sourceId) : "",
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+      }); }catch(_){ }
+      return null;
+    }
     if(!pool.has(note)) window.__preloadPianoSample(note);
 
     let entry = pool.get(note);
-    const url = __noteUrl(note);
     if (!entry){
       const a = makeAudio(url);
       entry = { list:[a], idx:0 };
@@ -6335,7 +6356,8 @@ window.addEventListener("DOMContentLoaded", ()=>{
     });
   };
 
-  function __noteUrl(note){
+  function __noteUrl(note, meta){
+  if (meta && meta.sourceType === "song" && meta.sourceId === "ch:9") return "";
   let n = String(note || "").trim();
 
   // C#4 -> Cs4
@@ -6651,10 +6673,21 @@ window.addEventListener("DOMContentLoaded", ()=>{
           let resolved = null;
           if (buf) resolved = __playBufferNow(note, meta);
           if (!resolved){
-            const htmlResolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
-            resolved = __wrapLiveHtmlAudioHandle(htmlResolved, note, meta, {
-              __wrappedFromHtmlFallback: true
-            });
+            if (meta && meta.sourceType === "song" && meta.sourceId === "ch:9"){
+              try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
+                note,
+                reason: "drum-channel-no-piano-fallback",
+                route: "sample / html audio",
+                sourceId: String(meta.sourceId || ""),
+                songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+                songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+              }); }catch(_){ }
+            }else{
+              const htmlResolved = window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta);
+              resolved = __wrapLiveHtmlAudioHandle(htmlResolved, note, meta, {
+                __wrappedFromHtmlFallback: true
+              });
+            }
           }
           resolved = window.__normalizeLiveSampleHandle(resolved, meta);
           if (!resolved || resolved.type === "pending") return null;
@@ -6674,6 +6707,17 @@ window.addEventListener("DOMContentLoaded", ()=>{
     }
     // If not ready yet, kick decode and fallback immediately
     try{ window.__preloadPianoBuffer(note); }catch(e){}
+    if (meta && meta.sourceType === "song" && meta.sourceId === "ch:9"){
+      try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("drop", {
+        note,
+        reason: "drum-channel-no-piano-fallback",
+        route: "sample / html audio",
+        sourceId: String(meta.sourceId || ""),
+        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null
+      }); }catch(_){ }
+      return null;
+    }
     try{ return window.__normalizeLiveSampleHandle(window.__playPianoSample_HTML && window.__playPianoSample_HTML(note, meta), meta); }catch(e){}
   };
 
