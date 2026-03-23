@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260323-030"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260323-031"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -6525,6 +6525,14 @@ window.addEventListener("DOMContentLoaded", ()=>{
     return id;
   }
 
+  function __sampleDebugFormatClampTarget(note, direction){
+    const normalizedNote = String(note || "").trim();
+    if (!normalizedNote) return "";
+    if (direction === "high") return `clamped-to-high:${normalizedNote}`;
+    if (direction === "low") return `clamped-to-low:${normalizedNote}`;
+    return `clamped-to:${normalizedNote}`;
+  }
+
   function __sampleDebugBuildAllChannelSong(parsed){
     const tracks = Array.isArray(parsed && parsed.tracks) ? parsed.tracks : [];
     const merged = [];
@@ -6568,6 +6576,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const fallbackCounts = new Map();
     const chainCounts = new Map();
     const collisions = new Map();
+    const resolvedRequestChains = new Map();
     const rows = [];
     notes.forEach((item, index) => {
       const playNote = window.__songItemToPlayNote
@@ -6592,6 +6601,21 @@ window.addEventListener("DOMContentLoaded", ()=>{
       fallbackCounts.set(row.fallbackNote, (fallbackCounts.get(row.fallbackNote) || 0) + 1);
       const chainKey = `${row.requestedNote} -> ${row.resolvedNote} -> ${row.fallbackNote}`;
       chainCounts.set(chainKey, (chainCounts.get(chainKey) || 0) + 1);
+      if (!resolvedRequestChains.has(chainKey)){
+        resolvedRequestChains.set(chainKey, {
+          requestedNote: row.requestedNote,
+          resolvedNote: row.resolvedNote,
+          fallbackNote: row.fallbackNote,
+          requestedMidi: row.requestedMidi,
+          resolvedMidi: row.resolvedMidi,
+          fallbackMidi: row.fallbackMidi,
+          reasons: new Set(),
+          count: 0
+        });
+      }
+      const resolvedRequestChain = resolvedRequestChains.get(chainKey);
+      if (row.reason) resolvedRequestChain.reasons.add(row.reason);
+      resolvedRequestChain.count += 1;
       if (!collisions.has(row.resolvedNote)){
         collisions.set(row.resolvedNote, {
           resolvedNote: row.resolvedNote,
@@ -6627,6 +6651,29 @@ window.addEventListener("DOMContentLoaded", ()=>{
           : []
       }))
       .sort((a, b)=> (b.distinctRequested - a.distinctRequested) || (b.totalCount - a.totalCount) || ((__sampleDebugNoteToMidi(a.resolvedNote) ?? 0) - (__sampleDebugNoteToMidi(b.resolvedNote) ?? 0)));
+    const resolvedDistribution = Array.from(resolvedRequestChains.values())
+      .map(item => {
+        const clampDirection = (item.requestedMidi != null && item.resolvedMidi != null)
+          ? (item.requestedMidi > item.resolvedMidi ? "high" : (item.requestedMidi < item.resolvedMidi ? "low" : ""))
+          : "";
+        return {
+          requestedNote: item.requestedNote,
+          resolvedNote: item.resolvedNote,
+          fallbackNote: item.fallbackNote,
+          requestedMidi: item.requestedMidi,
+          resolvedMidi: item.resolvedMidi,
+          fallbackMidi: item.fallbackMidi,
+          count: item.count,
+          reasons: Array.from(item.reasons).sort(),
+          clampLabel: clampDirection ? __sampleDebugFormatClampTarget(item.resolvedNote, clampDirection) : ""
+        };
+      })
+      .sort((a, b)=> {
+        const ar = Number.isFinite(a.requestedMidi) ? a.requestedMidi : Number.POSITIVE_INFINITY;
+        const br = Number.isFinite(b.requestedMidi) ? b.requestedMidi : Number.POSITIVE_INFINITY;
+        if (ar !== br) return ar - br;
+        return (a.resolvedMidi ?? 0) - (b.resolvedMidi ?? 0);
+      });
     const sortedByRequested = rows.slice().sort((a, b)=> {
       const am = Number.isFinite(a.requestedMidi) ? a.requestedMidi : Number.POSITIVE_INFINITY;
       const bm = Number.isFinite(b.requestedMidi) ? b.requestedMidi : Number.POSITIVE_INFINITY;
@@ -6637,6 +6684,46 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const highEdge = sortedByRequested.slice(Math.max(0, sortedByRequested.length - 12));
     const highClampRows = sortedByRequested.filter(row => row.reason === "out-of-range" || (row.requestedMidi != null && row.resolvedMidi != null && row.requestedMidi > row.resolvedMidi));
     const lowClampRows = sortedByRequested.filter(row => row.reason === "low-note-unsupported" || (row.requestedMidi != null && row.resolvedMidi != null && row.requestedMidi < row.resolvedMidi));
+    const highClampSummaryMap = new Map();
+    highClampRows.forEach(row => {
+      const key = `${row.requestedNote} -> ${row.resolvedNote} -> ${row.fallbackNote}`;
+      if (!highClampSummaryMap.has(key)){
+        highClampSummaryMap.set(key, {
+          requestedNote: row.requestedNote,
+          resolvedNote: row.resolvedNote,
+          fallbackNote: row.fallbackNote,
+          requestedMidi: row.requestedMidi,
+          resolvedMidi: row.resolvedMidi,
+          fallbackMidi: row.fallbackMidi,
+          reason: row.reason,
+          clampLabel: __sampleDebugFormatClampTarget(row.resolvedNote, "high"),
+          count: 0
+        });
+      }
+      highClampSummaryMap.get(key).count += 1;
+    });
+    const highClampSummary = Array.from(highClampSummaryMap.values())
+      .sort((a, b)=> (a.requestedMidi ?? 0) - (b.requestedMidi ?? 0));
+    const lowClampSummaryMap = new Map();
+    lowClampRows.forEach(row => {
+      const key = `${row.requestedNote} -> ${row.resolvedNote} -> ${row.fallbackNote}`;
+      if (!lowClampSummaryMap.has(key)){
+        lowClampSummaryMap.set(key, {
+          requestedNote: row.requestedNote,
+          resolvedNote: row.resolvedNote,
+          fallbackNote: row.fallbackNote,
+          requestedMidi: row.requestedMidi,
+          resolvedMidi: row.resolvedMidi,
+          fallbackMidi: row.fallbackMidi,
+          reason: row.reason,
+          clampLabel: __sampleDebugFormatClampTarget(row.resolvedNote, "low"),
+          count: 0
+        });
+      }
+      lowClampSummaryMap.get(key).count += 1;
+    });
+    const lowClampSummary = Array.from(lowClampSummaryMap.values())
+      .sort((a, b)=> (a.requestedMidi ?? 0) - (b.requestedMidi ?? 0));
     const chainSummary = Array.from(chainCounts.entries())
       .map(([chain, count]) => ({ chain, count }))
       .sort((a, b)=> (b.count - a.count) || a.chain.localeCompare(b.chain))
@@ -6649,16 +6736,27 @@ window.addEventListener("DOMContentLoaded", ()=>{
       resolvedCounts: Array.from(resolvedCounts.entries()).map(([note, count]) => ({ note, count })).sort((a, b)=> ((__sampleDebugNoteToMidi(a.note) ?? 0) - (__sampleDebugNoteToMidi(b.note) ?? 0))),
       fallbackCounts: Array.from(fallbackCounts.entries()).map(([note, count]) => ({ note, count })).sort((a, b)=> ((__sampleDebugNoteToMidi(a.note) ?? 0) - (__sampleDebugNoteToMidi(b.note) ?? 0))),
       chainSummary,
+      resolvedDistribution,
       collisions: collisionList,
       lowEdge,
       highEdge,
       highClampRows,
       lowClampRows,
+      highClampSummary,
+      lowClampSummary,
       rows
     };
     try{
       console.groupCollapsed(`[sample resolution stats] ${sourceLabel || statsSourceId || "unknown"} count=${result.noteCount}`);
       console.table(result.chainSummary);
+      console.table(result.resolvedDistribution.map(item => ({
+        requestedNote: item.requestedNote,
+        resolvedNote: item.resolvedNote,
+        fallbackNote: item.fallbackNote,
+        count: item.count,
+        reasons: item.reasons.join(", "),
+        clampLabel: item.clampLabel
+      })));
       if (result.collisions.length) console.table(result.collisions.map(item => ({
         resolvedNote: item.resolvedNote,
         totalCount: item.totalCount,
@@ -6679,11 +6777,23 @@ window.addEventListener("DOMContentLoaded", ()=>{
         reason: row.reason
       })));
       if (result.highClampRows.length){
-        console.table(result.highClampRows.map(row => ({
+        console.table(result.highClampSummary.map(row => ({
           requestedNote: row.requestedNote,
           resolvedNote: row.resolvedNote,
           fallbackNote: row.fallbackNote,
-          reason: row.reason
+          reason: row.reason,
+          clampLabel: row.clampLabel,
+          count: row.count
+        })));
+      }
+      if (result.lowClampRows.length){
+        console.table(result.lowClampSummary.map(row => ({
+          requestedNote: row.requestedNote,
+          resolvedNote: row.resolvedNote,
+          fallbackNote: row.fallbackNote,
+          reason: row.reason,
+          clampLabel: row.clampLabel,
+          count: row.count
         })));
       }
       console.groupEnd();
