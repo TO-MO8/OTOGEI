@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260323-031"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260323-032"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -5741,7 +5741,7 @@ return trSources[0]?.id || sources[0].id;
 
   if (!fileEl || !loadBtn || !trSel || !useBtn) return;
 
-  let __parsed = null;
+  let __parsed = window.__parsed || null;
 
   // --- Time Signature helper (global-safe; works even if module script is blocked) ---
   if (!window.__getGlobalTimeSignature){
@@ -5867,6 +5867,7 @@ function __registerTrackAsSong(sourceId){
 
       const ab = await f.arrayBuffer();
       __parsed = parseMIDI(ab);
+      window.__parsed = __parsed;
 
       // Key hint
       try{
