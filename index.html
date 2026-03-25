@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-039"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-040"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -7016,72 +7016,103 @@ window.addEventListener("DOMContentLoaded", ()=>{
       }); }catch(_){}
       return null;
     }
+
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const bufferRateRaw = Number(meta && meta.playbackRate);
+    const bufferPlaybackRate = (Number.isFinite(bufferRateRaw) && bufferRateRaw > 0) ? bufferRateRaw : 1;
+    try{ console.log("[live sample] final-meta webaudio", {
+      requestedMidi: __coerceFiniteMidiOrNull(meta && meta.requestedMidi),
+      sourceMidi: __coerceFiniteMidiOrNull(meta && meta.sourceMidi),
+      resolvedMidi: __coerceFiniteMidiOrNull(meta && meta.resolvedMidi),
+      playbackRate: bufferPlaybackRate
+    }); }catch(_){}
+    __captureFinalPianoPlaybackMeta("sample / webaudio", note, Object.assign({}, meta, { playbackRate: bufferPlaybackRate }));
+    try{ src.playbackRate.value = bufferPlaybackRate; }catch(e){}
+
+    const g = ctx.createGain();
+    const nowCtxLocal = Number.isFinite(Number(ctx && ctx.currentTime)) ? Number(ctx.currentTime) : 0;
+    const scheduledAudioTime = Number(meta && meta.scheduledAudioTime);
+    const startAt = Number.isFinite(scheduledAudioTime) ? Math.max(nowCtxLocal, scheduledAudioTime) : nowCtxLocal;
+    const schedulePastThresholdSec = 0.05;
+    const scheduledTimeAlreadyPast = Number.isFinite(scheduledAudioTime) && Number.isFinite(nowCtxLocal) && scheduledAudioTime < (nowCtxLocal - schedulePastThresholdSec);
+    const matchLiveProfile = __shouldMatchLiveInputSampleProfile(meta);
+    const trimMs = matchLiveProfile ? 3 : 0;
+    const trimSec = Math.max(0, Math.min(buf.duration - 0.001, trimMs / 1000));
+    const attackMs = matchLiveProfile ? 1.8 : 2.0;
+    const attackEndAt = startAt + (attackMs / 1000);
+    const eventPerf = Number(meta && meta.eventPerf);
+    const callPerf = Number(meta && meta.callPerf);
+    const callPerfNow = Number.isFinite(callPerf) ? callPerf : performance.now();
+    const startLeadMs = (startAt - nowCtxLocal) * 1000;
+    const audibleMs = (Number.isFinite(eventPerf) ? (callPerfNow - eventPerf) : 0) + Math.max(0, startLeadMs) + attackMs;
+    const liveGain = __resolveLiveInputSampleGainMultiplier(note, meta);
+    const gainInfo = __applySongPlaybackVolume(liveGain, meta);
+    let sourceStarted = false;
+
+    try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("start", note, meta, {
+      route: "sample / webaudio",
+      gainMultiplier: gainInfo.finalGainAfterSongVolume,
+      trimMs,
+      attackMs,
+      scheduledDurMs: meta && meta.durMs,
+      autoStopFadeMs: meta && meta.autoStopFadeMs,
+      samplePeak: window.__getLiveInputSamplePeakValue && window.__getLiveInputSamplePeakValue(note)
+    }); }catch(_){ }
+    if (attackMs <= 0){
+      g.gain.setValueAtTime(gainInfo.finalGainAfterSongVolume, startAt);
+    }else{
+      g.gain.setValueAtTime(0.0001, startAt);
+      if (attackMs <= 0.25) g.gain.linearRampToValueAtTime(gainInfo.finalGainAfterSongVolume, attackEndAt);
+      else g.gain.exponentialRampToValueAtTime(gainInfo.finalGainAfterSongVolume, attackEndAt);
+    }
+
+    src.connect(g); g.connect(ctx.destination);
+    try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("log", {
+      note,
+      reason: scheduledTimeAlreadyPast ? "scheduled-time-already-past" : "start-attempt",
+      route: "sample / webaudio",
+      routeCandidate: "sample / webaudio",
+      scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
+      currentAudioTime: nowCtxLocal,
+      plannedTimeSec: Number.isFinite(Number(meta && meta.plannedTimeSec)) ? Number(meta && meta.plannedTimeSec) : null,
+      handleState: "buffer-ready",
+      hasBuffer: true,
+      songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
+      songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta && meta.songNoteIndex) : null,
+      ...sampleDebug
+    }); }catch(_){ }
+
     try{
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      const bufferRateRaw = Number(meta && meta.playbackRate);
-      const bufferPlaybackRate = (Number.isFinite(bufferRateRaw) && bufferRateRaw > 0) ? bufferRateRaw : 1;
-      try{ console.log("[live sample] final-meta webaudio", {
-        requestedMidi: __coerceFiniteMidiOrNull(meta && meta.requestedMidi),
-        sourceMidi: __coerceFiniteMidiOrNull(meta && meta.sourceMidi),
-        resolvedMidi: __coerceFiniteMidiOrNull(meta && meta.resolvedMidi),
-        playbackRate: bufferPlaybackRate
-      }); }catch(_){}
-      __captureFinalPianoPlaybackMeta("sample / webaudio", note, Object.assign({}, meta, { playbackRate: bufferPlaybackRate }));
-      try{ src.playbackRate.value = bufferPlaybackRate; }catch(e){}
-
-      const g = ctx.createGain();
-      const nowCtx = ctx.currentTime;
-      const scheduledAudioTime = Number(meta && meta.scheduledAudioTime);
-      const startAt = Number.isFinite(scheduledAudioTime) ? Math.max(nowCtx, scheduledAudioTime) : nowCtx;
-      const schedulePastThresholdSec = 0.05;
-      const scheduledTimeAlreadyPast = Number.isFinite(scheduledAudioTime) && Number.isFinite(nowCtx) && scheduledAudioTime < (nowCtx - schedulePastThresholdSec);
-      const matchLiveProfile = __shouldMatchLiveInputSampleProfile(meta);
-      const trimMs = matchLiveProfile ? 3 : 0;
-      const trimSec = Math.max(0, Math.min(buf.duration - 0.001, trimMs / 1000));
-      const attackMs = matchLiveProfile ? 1.8 : 2.0;
-      const attackEndAt = startAt + (attackMs / 1000);
-      const eventPerf = Number(meta && meta.eventPerf);
-      const callPerf = Number(meta && meta.callPerf);
-      const callPerfNow = Number.isFinite(callPerf) ? callPerf : performance.now();
-      const startLeadMs = (startAt - nowCtx) * 1000;
-      const audibleMs = (Number.isFinite(eventPerf) ? (callPerfNow - eventPerf) : 0) + Math.max(0, startLeadMs) + attackMs;
-      const liveGain = __resolveLiveInputSampleGainMultiplier(note, meta);
-      const gainInfo = __applySongPlaybackVolume(liveGain, meta);
-      try{ window.__logSamplePlaybackCompare && window.__logSamplePlaybackCompare("start", note, meta, {
-        route: "sample / webaudio",
-        gainMultiplier: gainInfo.finalGainAfterSongVolume,
-        trimMs,
-        attackMs,
-        scheduledDurMs: meta && meta.durMs,
-        autoStopFadeMs: meta && meta.autoStopFadeMs,
-        samplePeak: window.__getLiveInputSamplePeakValue && window.__getLiveInputSamplePeakValue(note)
-      }); }catch(_){ }
-      if (attackMs <= 0){
-        g.gain.setValueAtTime(gainInfo.finalGainAfterSongVolume, startAt);
-      }else{
-        g.gain.setValueAtTime(0.0001, startAt);
-        if (attackMs <= 0.25) g.gain.linearRampToValueAtTime(gainInfo.finalGainAfterSongVolume, attackEndAt);
-        else g.gain.exponentialRampToValueAtTime(gainInfo.finalGainAfterSongVolume, attackEndAt);
+      if (!sourceStarted){
+        src.start(startAt, trimSec);
+        sourceStarted = true;
       }
-
-      src.connect(g); g.connect(ctx.destination);
-      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("log", {
+    }catch(e){
+      const startFailReason = scheduledTimeAlreadyPast ? "scheduled-time-already-past" : "source-start-threw";
+      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
         note,
-        reason: scheduledTimeAlreadyPast ? "scheduled-time-already-past" : "start-attempt",
+        reason: startFailReason || "source-start-threw",
         route: "sample / webaudio",
         routeCandidate: "sample / webaudio",
         scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
-        currentAudioTime: nowCtx,
-        plannedTimeSec: Number.isFinite(Number(meta && meta.plannedTimeSec)) ? Number(meta.plannedTimeSec) : null,
+        currentAudioTime: nowCtxLocal,
         handleState: "buffer-ready",
         hasBuffer: true,
         songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
+        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta && meta.songNoteIndex) : null,
+        error: e && e.message ? e.message : String(e),
         ...sampleDebug
-      }); }catch(_){ }
-      src.start(startAt, trimSec);
-      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
+      }); }catch(_){}
+      return null;
+    }
+
+    const voice = { src, gain: g, startedAt: startAt, note };
+    voice.type = "buffer";
+    voice.__liveRoute = "sample / webaudio";
+    voice.__scheduledStartAudioTime = startAt;
+    try{
+      if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
         note,
         route: "sample / webaudio",
         trimMs,
@@ -7096,13 +7127,12 @@ window.addEventListener("DOMContentLoaded", ()=>{
         songVolume: gainInfo.songVolume,
         finalGainAfterSongVolume: gainInfo.finalGainAfterSongVolume,
         scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
-        currentAudioTime: nowCtx,
+        currentAudioTime: nowCtxLocal,
         handleState: "buffer-ready",
         hasBuffer: true,
         routeCandidate: "sample / webaudio",
         ...sampleDebug
-      }); }catch(_){}
-
+      });
       const via = (meta && meta.via) || "unknown";
       try{
         console.log(`[live sample] ${via} event_to_play_call_ms`, Number((Number.isFinite(eventPerf) ? (callPerfNow - eventPerf) : 0).toFixed(3)));
@@ -7110,14 +7140,9 @@ window.addEventListener("DOMContentLoaded", ()=>{
         console.log(`[live sample] ${via} source_start_offset_ms`, Number(startLeadMs.toFixed(3)));
         console.log(`[live sample] ${via} sample_trim_ms`, Number((trimSec * 1000).toFixed(3)));
         console.log(`[live sample] ${via} gain_attack_ms`, Number(attackMs.toFixed(3)));
-        console.log(`[live sample] ${via} gain_ready_ms`, Number((((attackEndAt - nowCtx) * 1000)).toFixed(3)));
+        console.log(`[live sample] ${via} gain_ready_ms`, Number((((attackEndAt - nowCtxLocal) * 1000)).toFixed(3)));
         console.log(`[live sample] ${via} event_to_audible_ms`, Number(audibleMs.toFixed(3)));
       }catch(_){ }
-
-      const voice = { src, gain: g, startedAt: startAt, note };
-      voice.type = "buffer";
-      voice.__liveRoute = "sample / webaudio";
-      voice.__scheduledStartAudioTime = startAt;
       try{ window.__captureLiveInputDebugMeter && window.__captureLiveInputDebugMeter(note, meta, { route:"sample / webaudio", gainMultiplier: gainInfo.finalGainAfterSongVolume, handle: voice }); }catch(_){ }
       __ensureLiveVoiceMeta(voice, Object.assign({}, meta, { note, sample: note }));
       window.__activeNoteVoices = window.__activeNoteVoices || new Map();
@@ -7141,26 +7166,13 @@ window.addEventListener("DOMContentLoaded", ()=>{
           }
         }catch(_){}
       };
-
-      return voice;
     }catch(e){
-      try{ if (meta && meta.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("drop", {
-        note,
-        reason: scheduledTimeAlreadyPast ? "scheduled-time-already-past" : "buffer-start-exception",
-        route: "sample / webaudio",
-        routeCandidate: "sample / webaudio",
-        scheduledAudioTime: Number.isFinite(scheduledAudioTime) ? Number(scheduledAudioTime) : null,
-        currentAudioTime: nowCtx,
-        handleState: "buffer-ready",
-        hasBuffer: true,
-        songEventId: meta && meta.songEventId ? String(meta.songEventId) : "",
-        songNoteIndex: Number.isFinite(Number(meta && meta.songNoteIndex)) ? Number(meta.songNoteIndex) : null,
-        error: e && e.message ? e.message : String(e),
-        ...sampleDebug
-      }); }catch(_){}
-      return null;
+      try{ console.warn("[live sample] post-start non-fatal", e && e.message ? e.message : e); }catch(_){}
     }
+
+    return voice;
   }
+
 
   function __releaseBufferNote(note, fadeMs){
     try{
