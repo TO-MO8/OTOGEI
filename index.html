@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-036"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-037"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -6274,7 +6274,10 @@ useBtn.addEventListener("click", () => {
       }
       try{ a.pause(); }catch(_){ }
       try{ a.currentTime = 0; }catch(_){ }
-      try{ a.playbackRate = Number(meta && meta.playbackRate) || 1; }catch(_){ }
+      const htmlRateRaw = Number(meta && meta.playbackRate);
+      const htmlPlaybackRate = (Number.isFinite(htmlRateRaw) && htmlRateRaw > 0) ? htmlRateRaw : 1;
+      __captureFinalPianoPlaybackMeta("sample / html audio", note, Object.assign({}, meta, { playbackRate: htmlPlaybackRate }));
+      try{ a.playbackRate = htmlPlaybackRate; }catch(_){ }
       const appliedGain = __setLiveHtmlAudioGain(a, gainInfo.finalGainAfterSongVolume);
       if (handle && handle.audio) __setLiveHtmlAudioGain(handle.audio, gainInfo.finalGainAfterSongVolume);
       if (handle && typeof handle === "object") handle.__gainMultiplier = appliedGain;
@@ -6879,6 +6882,25 @@ window.addEventListener("DOMContentLoaded", ()=>{
   }
   window.__resolvePianoSampleRequest = window.__resolvePianoSampleRequest || __resolvePianoSampleRequest;
 
+  function __captureFinalPianoPlaybackMeta(route, note, meta){
+    try{
+      const rawRate = Number(meta && meta.playbackRate);
+      const playbackRate = (Number.isFinite(rawRate) && rawRate > 0) ? rawRate : 1;
+      window.__lastPianoPlaybackMeta = {
+        route: String(route || ""),
+        note: String(note || ""),
+        requestedSample: String(meta && meta.requestedSample || meta && meta.note || ""),
+        sourceSample: String(meta && meta.sourceSample || ""),
+        resolvedSample: String(meta && meta.resolvedSample || note || ""),
+        fallbackSample: String(meta && meta.fallbackSample || ""),
+        sourceMidi: Number.isFinite(Number(meta && meta.sourceMidi)) ? Number(meta.sourceMidi) : null,
+        resolvedMidi: Number.isFinite(Number(meta && meta.resolvedMidi)) ? Number(meta.resolvedMidi) : null,
+        playbackRate,
+        sampleSupportReason: String(meta && meta.sampleSupportReason || "")
+      };
+    }catch(_){}
+  }
+
   function __noteUrl(note, meta){
     const resolved = __resolvePianoSampleRequest(note, meta);
     return resolved && typeof resolved.url === "string" ? resolved.url : "";
@@ -6979,7 +7001,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
     try{
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      try{ src.playbackRate.value = Number(meta && meta.playbackRate) || 1; }catch(e){}
+      const bufferRateRaw = Number(meta && meta.playbackRate);
+      const bufferPlaybackRate = (Number.isFinite(bufferRateRaw) && bufferRateRaw > 0) ? bufferRateRaw : 1;
+      __captureFinalPianoPlaybackMeta("sample / webaudio", note, Object.assign({}, meta, { playbackRate: bufferPlaybackRate }));
+      try{ src.playbackRate.value = bufferPlaybackRate; }catch(e){}
 
       const g = ctx.createGain();
       const nowCtx = ctx.currentTime;
@@ -7165,13 +7190,20 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const requestedNote = String(resolved && resolved.normalizedNote || note || "").trim();
     const sourceSampleNote = String(resolved && resolved.sourceSampleNote || resolved && resolved.resolvedNote || requestedNote || "").trim();
     const resolvedNote = String(resolved && resolved.resolvedNote || sourceSampleNote || requestedNote || "").trim();
+    const inheritedPlaybackRate = Number(meta && meta.playbackRate);
+    const resolvedPlaybackRate = Number(resolved && resolved.playbackRate);
+    const effectivePlaybackRate = (Number.isFinite(inheritedPlaybackRate) && inheritedPlaybackRate > 0)
+      ? inheritedPlaybackRate
+      : ((Number.isFinite(resolvedPlaybackRate) && resolvedPlaybackRate > 0) ? resolvedPlaybackRate : 1);
     const playMeta = Object.assign({}, meta, {
       requestedSample: requestedNote,
       sourceSample: sourceSampleNote,
       resolvedSample: resolvedNote,
       fallbackSample: String(resolved && resolved.fallbackNote || resolvedNote || ""),
-      playbackRate: Number.isFinite(Number(resolved && resolved.playbackRate)) ? Number(resolved.playbackRate) : 1,
-      sampleSupportReason: String(resolved && resolved.reason || "")
+      sourceMidi: Number.isFinite(Number(resolved && resolved.sourceMidi)) ? Number(resolved.sourceMidi) : null,
+      resolvedMidi: Number.isFinite(Number(resolved && resolved.resolvedMidi)) ? Number(resolved.resolvedMidi) : null,
+      playbackRate: effectivePlaybackRate,
+      sampleSupportReason: String(meta && meta.sampleSupportReason || resolved && resolved.reason || "")
     });
     const isLiveInput = __safeIsLiveInputSampleMeta(meta);
     const isScheduledSong = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
