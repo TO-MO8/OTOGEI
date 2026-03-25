@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-040"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-041"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -3249,6 +3249,20 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
     return !!(meta && meta.matchLiveInputSample);
   }
   window.__shouldMatchLiveInputSampleProfile = __shouldMatchLiveInputSampleProfile;
+
+  function __resolveWebAudioSampleProfile(meta){
+    const isSong = !!(meta && meta.sourceType === "song");
+    const matchLiveProfile = __shouldMatchLiveInputSampleProfile(meta);
+    // BUILD 20260325-041:
+    // no-start対策(040)は維持しつつ、WebAudioの立ち上がりをHTML fallback寄りに戻す。
+    // - attackを短くして打鍵感を戻す
+    // - trimを弱めてサンプル先頭の質感を残す
+    if (isSong || matchLiveProfile){
+      return { trimMs: 1.0, attackMs: 0.45 };
+    }
+    return { trimMs: 0, attackMs: 1.6 };
+  }
+  window.__resolveWebAudioSampleProfile = __resolveWebAudioSampleProfile;
 
   function __getLiveInputSampleGainMultiplier(note, meta){
     if (!__shouldMatchLiveInputSampleProfile(meta)) return 1.0;
@@ -7036,10 +7050,12 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const startAt = Number.isFinite(scheduledAudioTime) ? Math.max(nowCtxLocal, scheduledAudioTime) : nowCtxLocal;
     const schedulePastThresholdSec = 0.05;
     const scheduledTimeAlreadyPast = Number.isFinite(scheduledAudioTime) && Number.isFinite(nowCtxLocal) && scheduledAudioTime < (nowCtxLocal - schedulePastThresholdSec);
-    const matchLiveProfile = __shouldMatchLiveInputSampleProfile(meta);
-    const trimMs = matchLiveProfile ? 3 : 0;
+    const profile = (typeof window.__resolveWebAudioSampleProfile === "function")
+      ? window.__resolveWebAudioSampleProfile(meta)
+      : null;
+    const trimMs = Number.isFinite(Number(profile && profile.trimMs)) ? Number(profile.trimMs) : 0;
     const trimSec = Math.max(0, Math.min(buf.duration - 0.001, trimMs / 1000));
-    const attackMs = matchLiveProfile ? 1.8 : 2.0;
+    const attackMs = Number.isFinite(Number(profile && profile.attackMs)) ? Number(profile.attackMs) : 1.8;
     const attackEndAt = startAt + (attackMs / 1000);
     const eventPerf = Number(meta && meta.eventPerf);
     const callPerf = Number(meta && meta.callPerf);
