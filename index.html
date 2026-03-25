@@ -2644,15 +2644,38 @@ async function playNoteOut(note, durMs, opts={}){
     // Samples (piano). If samples are missing/unavailable (or file:// blocks fetch), fall back to synth so it always makes a sound.
     if (soundMode === "sample"){
       let ok = false;
+      let sampleFallbackReason = "";
       try{
         // On file://, browsers block fetch for file resources. Treat as unavailable.
-        if (location && location.protocol === "file:") throw new Error("file protocol blocks sample fetch");
-        await ensureSampleReady();
-        ok = await playSample(noteName, useOct, durMs, opts);
-      }catch(e){
+        if (location && location.protocol === "file:"){
+          sampleFallbackReason = "ensureSampleReady-throw";
+          throw new Error("file protocol blocks sample fetch");
+        }
+        let sampleReady = false;
+        try{
+          const readyResult = await ensureSampleReady();
+          sampleReady = readyResult !== false;
+          if (!sampleReady) sampleFallbackReason = "ensureSampleReady-false";
+        }catch(_eReady){
+          sampleReady = false;
+          sampleFallbackReason = "ensureSampleReady-throw";
+        }
+        if (sampleReady){
+          try{
+            ok = await playSample(noteName, useOct, durMs, opts);
+            if (!ok) sampleFallbackReason = "playSample-false";
+          }catch(_ePlaySample){
+            ok = false;
+            sampleFallbackReason = "playSample-throw";
+          }
+        }else{
+          ok = false;
+        }
+      }catch(_eSampleTop){
         ok = false;
       }
       if (ok) return true;
+      if (!sampleFallbackReason) sampleFallbackReason = "sample-fallback-unknown";
       // fallback
       try{
         const m = midiFromNote(noteName, useOct);
@@ -2663,6 +2686,7 @@ async function playNoteOut(note, durMs, opts={}){
       try{ if (opts && opts.sourceType === "song" && window.__markSongPlaybackDebug) window.__markSongPlaybackDebug("start", {
         note: emitNote,
         route: "sample-fallback",
+        reason: sampleFallbackReason,
         plannedTimeSec: Number.isFinite(Number(opts.plannedTimeSec)) ? Number(opts.plannedTimeSec) : null,
         songEventId: opts.songEventId != null ? String(opts.songEventId) : "",
         songNoteIndex: Number.isFinite(Number(opts.songNoteIndex)) ? Number(opts.songNoteIndex) : null,
@@ -5041,6 +5065,7 @@ return trSources[0]?.id || sources[0].id;
   }
   function __normalizeSongDebugRoute(route){
     const raw = String(route || "").toLowerCase();
+    if (raw === "sample-fallback" || raw.includes("sample-fallback")) return "sample-fallback";
     if (raw.includes("html")) return "html";
     if (raw.includes("webaudio") || raw === "gmpiano") return "webaudio";
     if (raw === "synth") return "synth";
@@ -5452,6 +5477,7 @@ return trSources[0]?.id || sources[0].id;
           }
           songEventStats[eventKey] = {
             songEventId: eventKey,
+            note: String(noteState.note || ""),
             emittedCount,
             playCallCount,
             primaryStartedEventCount: started ? 1 : 0,
@@ -5464,6 +5490,7 @@ return trSources[0]?.id || sources[0].id;
             playCallNoStartReason,
             playCallNoStartReasonCounts: Object.assign({}, noteState.playCallNoStartReasonCounts || {}),
             routeCandidate: String(noteState.lastStartRoute || noteState.routeCandidate || ""),
+            sampleFallbackReason: String(noteState.sampleFallbackReason || ""),
             requestedSample: String(noteState.requestedSample || ""),
             fallbackSample: String(noteState.fallbackSample || "")
           };
@@ -5533,7 +5560,7 @@ return trSources[0]?.id || sources[0].id;
       const delaySummary = __computeSongDelayStats(state.noteDelays);
       Object.assign(summary, delaySummary);
       const routeSummary = {};
-      ["html", "webaudio", "synth", "fallback"].forEach(group => {
+      ["html", "webaudio", "synth", "sample-fallback", "fallback"].forEach(group => {
         const info = state.routeStats && state.routeStats[group];
         routeSummary[group] = {
           startedCount: Number(info && info.startedCount || 0),
@@ -5547,6 +5574,30 @@ return trSources[0]?.id || sources[0].id;
       const uniqueSongEventIds = Array.isArray(state.songEventIdOrder) ? state.songEventIdOrder.slice() : [];
       summary.uniqueSongEventIdCount = uniqueSongEventIds.length;
       summary.sampleSongEventIds = uniqueSongEventIds.slice(0, 10);
+      const sampleFallbackReasonCounts = Object.create(null);
+      const sampleFallbackByNote = Object.create(null);
+      const sampleFallbackBySamplePair = Object.create(null);
+      Object.keys(songEventStats).forEach(eventKey => {
+        const stat = songEventStats[eventKey];
+        if (!stat) return;
+        const routeCandidate = String(stat.routeCandidate || "").toLowerCase();
+        if (!(routeCandidate === "sample-fallback" || routeCandidate.includes("sample-fallback"))) return;
+        const reason = String(stat.sampleFallbackReason || "unknown");
+        const note = String(stat.note || "");
+        const samplePair = `${String(stat.requestedSample || "")}->${String(stat.fallbackSample || "")}`;
+        sampleFallbackReasonCounts[reason] = Number(sampleFallbackReasonCounts[reason] || 0) + 1;
+        if (note) sampleFallbackByNote[note] = Number(sampleFallbackByNote[note] || 0) + 1;
+        sampleFallbackBySamplePair[samplePair] = Number(sampleFallbackBySamplePair[samplePair] || 0) + 1;
+      });
+      summary.sampleFallbackReasonCounts = sampleFallbackReasonCounts;
+      summary.sampleFallbackTopNotes = Object.entries(sampleFallbackByNote)
+        .map(([note, count]) => ({ note, count: Number(count || 0) }))
+        .sort((a, b)=> (Number(b.count || 0) - Number(a.count || 0)) || String(a.note || "").localeCompare(String(b.note || "")))
+        .slice(0, 20);
+      summary.sampleFallbackTopSamplePairs = Object.entries(sampleFallbackBySamplePair)
+        .map(([samplePair, count]) => ({ samplePair, count: Number(count || 0) }))
+        .sort((a, b)=> (Number(b.count || 0) - Number(a.count || 0)) || String(a.samplePair || "").localeCompare(String(b.samplePair || "")))
+        .slice(0, 20);
       const worstDelays = (Array.isArray(state.noteDelays) ? state.noteDelays.slice() : [])
         .sort((a,b)=>Math.abs(Number(b && b.delayMs || 0)) - Math.abs(Number(a && a.delayMs || 0)))
         .slice(0, 20);
@@ -5660,6 +5711,9 @@ return trSources[0]?.id || sources[0].id;
         }
         noteState.lastStartRoute = String(payload.route || "");
         noteState.lastStartPerfNow = Number.isFinite(Number(payload.actualStartPerfNow)) ? Number(payload.actualStartPerfNow) : performance.now();
+        if (noteState.lastStartRoute === "sample-fallback" || noteState.lastStartRoute.includes("sample-fallback")){
+          noteState.sampleFallbackReason = String(payload.reason || noteState.sampleFallbackReason || "");
+        }
       }else if (key === "drop" && noteState){
         const branchReason = String(payload.reason || "");
         const resolvedReason = __resolveSongPlaybackDropReason(branchReason, !!payload.priorStarted);
