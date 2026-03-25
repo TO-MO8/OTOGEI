@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-035"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-036"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -6493,17 +6493,22 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const shouldClamp = Number.isFinite(requestedOctave) && (requestedOctave < 3 || requestedOctave > 6);
     const sourceSampleNote = shouldClamp ? fallbackNote : normalizedNote;
     const sourceMidi = __sampleDebugNoteToMidi(sourceSampleNote);
+    const resolvedNote = sourceSampleNote;
+    const resolvedMidi = Number.isFinite(sourceMidi) ? sourceMidi : __sampleDebugNoteToMidi(resolvedNote);
     const shouldUsePlaybackRate = (
       Number.isFinite(requestedOctave) &&
       requestedOctave < 3 &&
       Number.isFinite(requestedMidi) &&
-      Number.isFinite(sourceMidi) &&
-      sourceMidi > requestedMidi
+      Number.isFinite(resolvedMidi) &&
+      resolvedMidi > requestedMidi
     );
     const playbackRate = shouldUsePlaybackRate
-      ? Math.pow(2, (requestedMidi - sourceMidi) / 12)
+      ? Math.pow(2, (requestedMidi - resolvedMidi) / 12)
       : 1;
-    const resolvedNote = sourceSampleNote;
+    const supportReason = String(support && support.reason || "");
+    const reason = shouldUsePlaybackRate
+      ? `low-note-transposed:${fallbackNote}`
+      : supportReason;
     return {
       requestedNote,
       normalizedNote,
@@ -6512,13 +6517,12 @@ window.addEventListener("DOMContentLoaded", ()=>{
       fallbackNote,
       requestedOctave,
       requestedMidi,
-      sourceMidi,
+      sourceMidi: resolvedMidi,
+      resolvedMidi,
       playbackRate,
       exactSampleInstalled,
       clampedSampleInstalled,
-      reason: shouldUsePlaybackRate
-        ? `low-note-transposed:${fallbackNote}`
-        : String(support && support.reason || ""),
+      reason,
       url: sourceSampleNote ? `assets/piano/${sourceSampleNote}.mp3` : ""
     };
   }
@@ -6620,8 +6624,14 @@ window.addEventListener("DOMContentLoaded", ()=>{
         fallbackNote: String(resolved && resolved.fallbackNote || ""),
         playbackRate: Number.isFinite(Number(resolved && resolved.playbackRate)) ? Number(resolved.playbackRate) : 1,
         reason: String(resolved && resolved.reason || ""),
-        requestedMidi: __sampleDebugNoteToMidi(resolved && resolved.requestedNote || requested || ""),
-        resolvedMidi: __sampleDebugNoteToMidi(resolved && resolved.resolvedNote || ""),
+        requestedMidi: Number.isFinite(Number(resolved && resolved.requestedMidi))
+          ? Number(resolved.requestedMidi)
+          : __sampleDebugNoteToMidi(resolved && resolved.requestedNote || requested || ""),
+        resolvedMidi: Number.isFinite(Number(resolved && resolved.resolvedMidi))
+          ? Number(resolved.resolvedMidi)
+          : (Number.isFinite(Number(resolved && resolved.sourceMidi))
+            ? Number(resolved.sourceMidi)
+            : __sampleDebugNoteToMidi(resolved && resolved.resolvedNote || "")),
         fallbackMidi: __sampleDebugNoteToMidi(resolved && resolved.fallbackNote || "")
       };
       rows.push(row);
