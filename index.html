@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-038"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-039"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -5061,7 +5061,12 @@ return trSources[0]?.id || sources[0].id;
   function __normalizeSongPlayCallNoStartReason(reason, detail){
     const raw = String(reason || "").trim();
     const sampleSupportReason = String(detail && detail.sampleSupportReason || "").trim();
-    if (!raw) return "playcall-no-start";
+    if (!raw){
+      const handleState = String(detail && detail.handleState || "");
+      if (handleState === "pending-handle" || handleState === "pending-handle-not-ready") return "pending-handle-not-ready";
+      if (detail && detail.hasBuffer === false) return "no-buffer-handle";
+      return "route-aborted-before-start";
+    }
     if (sampleSupportReason && (raw === "playcall-no-start" || raw === "play-returned-null" || raw === "buffer-missing-at-start" || raw === "pending-handle-not-ready" || raw === "route-aborted-before-start")) return sampleSupportReason;
     if (raw === "no-buffer-handle" || raw === "pending-handle-not-ready" || raw === "preload-timeout" || raw === "invalid-buffer" || raw === "source-start-threw" || raw === "scheduled-time-already-past" || raw === "token-stopped-after-playcall" || raw === "route-aborted-before-start") return raw;
     if (raw === "buffer-missing-at-start" || raw === "play-returned-null") return "no-buffer-handle";
@@ -7227,7 +7232,18 @@ window.addEventListener("DOMContentLoaded", ()=>{
     });
     const isLiveInput = __safeIsLiveInputSampleMeta(meta);
     const isScheduledSong = !!(meta && meta.sourceType === "song" && Number.isFinite(Number(meta.scheduledAudioTime)));
-    const shouldWaitForBuffer = __shouldMatchLiveInputSampleProfile(meta) || isScheduledSong;
+    const shouldWaitForBuffer = __shouldMatchLiveInputSampleProfile(meta);
+    if (isScheduledSong && !shouldWaitForBuffer){
+      try{ window.__markSongPlaybackDebug && window.__markSongPlaybackDebug("log", {
+        note: resolvedNote || note,
+        reason: "song-scheduled-no-buffer-wait",
+        routeCandidate: "sample",
+        scheduledAudioTime: Number.isFinite(Number(playMeta && playMeta.scheduledAudioTime)) ? Number(playMeta.scheduledAudioTime) : null,
+        songEventId: playMeta && playMeta.songEventId ? String(playMeta.songEventId) : "",
+        songNoteIndex: Number.isFinite(Number(playMeta && playMeta.songNoteIndex)) ? Number(playMeta.songNoteIndex) : null,
+        ...__getPianoSampleDebugFields(playMeta, resolvedNote || note)
+      }); }catch(_){ }
+    }
     // If buffer ready, this is the fastest path
     const h = resolvedNote ? __playBufferNow(resolvedNote, playMeta) : null;
     if (h){
