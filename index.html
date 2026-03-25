@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-034"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-035"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -5080,7 +5080,9 @@ return trSources[0]?.id || sources[0].id;
   }
   function __rememberSongPlayCallNoStart(noteState, detail){
     if (!noteState) return "";
-    const normalizedReason = __normalizeSongPlayCallNoStartReason(detail && (detail.branchReason || detail.reason), detail);
+    const normalizedReason = __normalizeSongPlayCallNoStartReason(detail && (detail.branchReason || detail.reason), Object.assign({}, detail, {
+      sampleSupportReason: String(detail && detail.sampleSupportReason || noteState.sampleSupportReason || "")
+    }));
     if (!normalizedReason) return "";
     noteState.playCallNoStartSeen = true;
     noteState.playCallNoStartReason = normalizedReason;
@@ -6486,16 +6488,15 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const fallbackNote = String(support && support.clampedNote || normalizedNote || "").trim();
     const requestedOctave = Number.isFinite(Number(support && support.requestedOctave)) ? Number(support.requestedOctave) : null;
     const requestedMidi = __sampleDebugNoteToMidi(normalizedNote);
-    const lowPlaybackRateTargets = new Set([40, 41, 42, 45, 47]); // E2 / F2 / Fs2 / A2 / B2
     const exactSampleInstalled = !!(support && support.exactSampleInstalled);
     const clampedSampleInstalled = !!(support && support.clampedSampleInstalled);
     const shouldClamp = Number.isFinite(requestedOctave) && (requestedOctave < 3 || requestedOctave > 6);
     const sourceSampleNote = shouldClamp ? fallbackNote : normalizedNote;
     const sourceMidi = __sampleDebugNoteToMidi(sourceSampleNote);
     const shouldUsePlaybackRate = (
+      Number.isFinite(requestedOctave) &&
       requestedOctave < 3 &&
       Number.isFinite(requestedMidi) &&
-      lowPlaybackRateTargets.has(requestedMidi) &&
       Number.isFinite(sourceMidi) &&
       sourceMidi > requestedMidi
     );
