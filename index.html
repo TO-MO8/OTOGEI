@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260323-033"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-034"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -6272,6 +6272,7 @@ useBtn.addEventListener("click", () => {
       }
       try{ a.pause(); }catch(_){ }
       try{ a.currentTime = 0; }catch(_){ }
+      try{ a.playbackRate = Number(meta && meta.playbackRate) || 1; }catch(_){ }
       const appliedGain = __setLiveHtmlAudioGain(a, gainInfo.finalGainAfterSongVolume);
       if (handle && handle.audio) __setLiveHtmlAudioGain(handle.audio, gainInfo.finalGainAfterSongVolume);
       if (handle && typeof handle === "object") handle.__gainMultiplier = appliedGain;
@@ -6492,12 +6493,11 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const sourceSampleNote = shouldClamp ? fallbackNote : normalizedNote;
     const sourceMidi = __sampleDebugNoteToMidi(sourceSampleNote);
     const shouldUsePlaybackRate = (
-      !exactSampleInstalled &&
       requestedOctave < 3 &&
       Number.isFinite(requestedMidi) &&
       lowPlaybackRateTargets.has(requestedMidi) &&
       Number.isFinite(sourceMidi) &&
-      sourceMidi > 0
+      sourceMidi > requestedMidi
     );
     const playbackRate = shouldUsePlaybackRate
       ? Math.pow(2, (requestedMidi - sourceMidi) / 12)
@@ -6515,7 +6515,9 @@ window.addEventListener("DOMContentLoaded", ()=>{
       playbackRate,
       exactSampleInstalled,
       clampedSampleInstalled,
-      reason: String(support && support.reason || ""),
+      reason: shouldUsePlaybackRate
+        ? `low-note-transposed:${fallbackNote}`
+        : String(support && support.reason || ""),
       url: sourceSampleNote ? `assets/piano/${sourceSampleNote}.mp3` : ""
     };
   }
@@ -6612,8 +6614,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
         index,
         requestedNote: String(resolved && resolved.requestedNote || requested || ""),
         normalizedNote: String(resolved && resolved.normalizedNote || requested || ""),
+        sourceSampleNote: String(resolved && resolved.sourceSampleNote || resolved && resolved.resolvedNote || ""),
         resolvedNote: String(resolved && resolved.resolvedNote || ""),
         fallbackNote: String(resolved && resolved.fallbackNote || ""),
+        playbackRate: Number.isFinite(Number(resolved && resolved.playbackRate)) ? Number(resolved.playbackRate) : 1,
         reason: String(resolved && resolved.reason || ""),
         requestedMidi: __sampleDebugNoteToMidi(resolved && resolved.requestedNote || requested || ""),
         resolvedMidi: __sampleDebugNoteToMidi(resolved && resolved.resolvedNote || ""),
@@ -6628,8 +6632,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
       if (!resolvedRequestChains.has(chainKey)){
         resolvedRequestChains.set(chainKey, {
           requestedNote: row.requestedNote,
+          sourceSampleNote: row.sourceSampleNote,
           resolvedNote: row.resolvedNote,
           fallbackNote: row.fallbackNote,
+          playbackRate: row.playbackRate,
           requestedMidi: row.requestedMidi,
           resolvedMidi: row.resolvedMidi,
           fallbackMidi: row.fallbackMidi,
@@ -6682,8 +6688,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
           : "";
         return {
           requestedNote: item.requestedNote,
+          sourceSampleNote: item.sourceSampleNote,
           resolvedNote: item.resolvedNote,
           fallbackNote: item.fallbackNote,
+          playbackRate: item.playbackRate,
           requestedMidi: item.requestedMidi,
           resolvedMidi: item.resolvedMidi,
           fallbackMidi: item.fallbackMidi,
@@ -6707,7 +6715,7 @@ window.addEventListener("DOMContentLoaded", ()=>{
     const lowEdge = sortedByRequested.slice(0, Math.min(12, sortedByRequested.length));
     const highEdge = sortedByRequested.slice(Math.max(0, sortedByRequested.length - 12));
     const highClampRows = sortedByRequested.filter(row => row.reason === "out-of-range" || (row.requestedMidi != null && row.resolvedMidi != null && row.requestedMidi > row.resolvedMidi));
-    const lowClampRows = sortedByRequested.filter(row => row.reason === "low-note-unsupported" || (row.requestedMidi != null && row.resolvedMidi != null && row.requestedMidi < row.resolvedMidi));
+    const lowClampRows = sortedByRequested.filter(row => (row.requestedMidi != null && row.resolvedMidi != null && row.requestedMidi < row.resolvedMidi && row.playbackRate === 1));
     const highClampSummaryMap = new Map();
     highClampRows.forEach(row => {
       const key = `${row.requestedNote} -> ${row.resolvedNote} -> ${row.fallbackNote}`;
@@ -6775,8 +6783,10 @@ window.addEventListener("DOMContentLoaded", ()=>{
       console.table(result.chainSummary);
       console.table(result.resolvedDistribution.map(item => ({
         requestedNote: item.requestedNote,
+        sourceSampleNote: item.sourceSampleNote,
         resolvedNote: item.resolvedNote,
         fallbackNote: item.fallbackNote,
+        playbackRate: item.playbackRate,
         count: item.count,
         reasons: item.reasons.join(", "),
         clampLabel: item.clampLabel
