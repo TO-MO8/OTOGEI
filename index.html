@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-042"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-043"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -3257,9 +3257,9 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
   window.__heldSamples = window.__heldSamples || new Map(); // sample -> handle
   window.__pendingHeldSamples = window.__pendingHeldSamples || new Map(); // sample -> pending handle
   const __LIVE_INPUT_SAMPLE_LOG__ = true;
-  const __MIN_INPUT_SAMPLE_MS__ = 0;
+  const __MIN_INPUT_SAMPLE_MS__ = 320;
   const __MIN_INPUT_SAMPLE_HTML_MS__ = 0;
-  const __LIVE_INPUT_RELEASE_MS__ = 6;
+  const __LIVE_INPUT_RELEASE_MS__ = 90;
   const __LIVE_INPUT_WEB_AUDIO_RELEASE_MS__ = 8;
   let __liveVoiceSeq = 0;
   let __liveStopSeq = 0;
@@ -3926,7 +3926,10 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
       });
       __stopPianoSampleHandle(h, fadeMs, { caller:"__stopHeldSample", stopSeq, sample, note:h.__note, via:(meta && meta.via) || h.__via });
       if ((h.type === "buffer" || h.type === "webaudio") && h.__note){
-        __killLiveNoteVoices(h.__note, fadeMs, stopRoute);
+        const voices = window.__activeNoteVoices && window.__activeNoteVoices.get(h.__note);
+        const index = voices ? voices.indexOf(h) : -1;
+        if (index >= 0) voices.splice(index, 1);
+        if (voices && !voices.length) window.__activeNoteVoices.delete(h.__note);
       }
     };
     if (waitMs > 0) setTimeout(runner, waitMs);
