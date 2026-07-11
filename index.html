@@ -488,10 +488,10 @@ button, select, input[type="file"]{
             <label>
               <span>音色</span>
               <select id="soundSel">
-                <option value="sample">🎹 ピアノ生音（サンプル）</option>
+                <option value="sample" selected>🎹 ピアノ生音（サンプル）</option>
                 <option value="beep">🔔 ビープ（代替）</option>
                 <option value="synth">🎹 内蔵ピアノ（確認用）</option>
-                <option value="gmpiano" selected>🎹 GMピアノ風（12サンプル）</option>
+                <option value="gmpiano">🎹 GMピアノ風（12サンプル）</option>
               </select>
             </label>
 
@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-041"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-042"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2015,7 +2015,7 @@ let quizWantBars = null;     // how many bars in current quiz
 
   
   let okMs = 1200;
-let soundMode = "gmpiano"; // "sample" | "beep" | "synth" | "gmpiano"
+let soundMode = "sample"; // "sample" | "beep" | "synth" | "gmpiano"
 window.soundMode = soundMode;
 
   function syncSoundModeFromUI(){
