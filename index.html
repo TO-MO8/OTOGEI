@@ -524,7 +524,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-043"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-044"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2428,6 +2428,15 @@ if(quizNowBarEl) quizNowBarEl.textContent = (quizNowMeasure != null) ? String(qu
           if (si < base.length) startIdx = si;
         }
 
+        let __questionStartMeasure = 0;
+        if (__mmNums && __mmNums.length === base.length && __mmNums[startIdx] != null){
+          __questionStartMeasure = __mmNums[startIdx];
+        } else if (__mmStarts && __mmStarts.length){
+          for (let m=0; m<__mmStarts.length && __mmStarts[m] <= startIdx; m++) __questionStartMeasure = m;
+        }
+        quizStartMeasure = __questionStartMeasure;
+        quizNowMeasure = __questionStartMeasure;
+
         if (__mmStarts && __mmNums && __mmNums.length === base.length){
           let startM = __forcedStart ? 0 : (__mmNums[startIdx] ?? 0);
           if (!__forcedStart && (__mmNums[startIdx] == null)){
@@ -2524,7 +2533,6 @@ if(quizNowBarEl) quizNowBarEl.textContent = (quizNowMeasure != null) ? String(qu
           if (item && Number.isFinite(item.__dtMs)) durs.push(item.__dtMs);
         }
 
-        if (quizStartMeasure == null){ quizStartMeasure = quizNowMeasure; }
         try{ updateQuizBarInfo(); }catch(_e){}
         answerPlay = playSeq;
         answer = playSeq.map(p => noteKey(p.n, p.o));
@@ -3097,6 +3105,7 @@ else if (allOkOrBetter) grade = "OK";
 
   function resetAll(){
     score = 0; streak = 0;
+    songPos = 0; __forceAbsSongStart = true;
     answer = []; answerTimings = [];
     quizStartTime = null; quizBarMs = null; quizWantBars = null; quizStartMeasure = null; quizNowMeasure = null;
     try{ updateQuizBarInfo(); }catch(_e){}
@@ -3121,15 +3130,6 @@ else if (allOkOrBetter) grade = "OK";
     try{ if (window.__invalidateSongPlayback) window.__invalidateSongPlayback("question-start"); }catch(_e){}
     __stopFullSongPlaybackForQuiz({ invalidateToken:false });
     if (soundMode === "sample") ensurePreload();
-    // Quiz ("問題を出す") should start from the beginning of the song.
-    // Full-song playback already starts at 0, but the quiz uses songPos which can be advanced by previous questions.
-    if (qSource === "song"){
-      songPos = 0;
-      quizNowMeasure = 0;
-      __forceAbsSongStart = true;
-      try{ updateQuizBarInfo(); }catch(_e){}
-      try{ __refreshBarBtns && __refreshBarBtns(); }catch(_e){}
-    }
     newQuestion();
   });
 playBtn.addEventListener("click", () => { ensureAudio(); if (soundMode === "sample") ensurePreload(); playAnswer(); });
