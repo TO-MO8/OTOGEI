@@ -538,7 +538,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-046"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-047"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2374,6 +2374,7 @@ if(quizNowBarEl) quizNowBarEl.textContent = (quizNowMeasure != null) ? String(qu
   function buildAnswer(){
     answerDurations = null;
     answerPlay = [];
+    quizTotalBars = null;
 
     // Force song-quiz to use melody mode (so it won't behave like single-note quiz)
     // This avoids accidental linkage to 単音あて when the selector and internal mode diverge.
@@ -2468,7 +2469,8 @@ if(quizNowBarEl) quizNowBarEl.textContent = (quizNowMeasure != null) ? String(qu
         quizStartMeasure = __questionStartMeasure;
         quizNowMeasure = __questionStartMeasure;
 
-        if (__mmStarts && __mmNums && __mmNums.length === base.length){
+        const __hasMeasureMap = !!(__mmStarts && __mmNums && __mmNums.length === base.length);
+        if (__hasMeasureMap){
           let startM = __forcedStart ? 0 : (__mmNums[startIdx] ?? 0);
           if (!__forcedStart && (__mmNums[startIdx] == null)){
             // find first defined measure number
@@ -2477,7 +2479,11 @@ if(quizNowBarEl) quizNowBarEl.textContent = (quizNowMeasure != null) ? String(qu
             if (si < base.length) startM = __mmNums[si] ?? 0;
           }
           const wantBars = Math.max(1, Math.min(4, Math.floor(barsLen||1)));
-          const endM = startM + wantBars - 1;
+          const totalBars = Number.isFinite(s.totalMeasures) ? s.totalMeasures : __mmStarts.length;
+          const remainingBars = Math.max(1, totalBars - startM);
+          const actualBars = Math.min(wantBars, remainingBars);
+          const endM = startM + actualBars - 1;
+          quizTotalBars = actualBars;
 
           for (let j=startIdx; j<base.length; j++){
             const mNum = __mmNums[j];
@@ -2531,7 +2537,7 @@ if(quizNowBarEl) quizNowBarEl.textContent = (quizNowMeasure != null) ? String(qu
 
         // Ensure melody quiz length reflects barsLen.
         // If bar-based collection yielded too few notes, extend until we cover (barsLen) bars worth of time (approx).
-        if (mode === MODE.melody && base.length > playSeq.length){
+        if (mode === MODE.melody && !__hasMeasureMap && base.length > playSeq.length){
           const __beats = (typeof beatsPerBar === "number" && beatsPerBar>0) ? beatsPerBar : 4;
           const __barMs = __beats * tempoMs;
           const __wantBars = Math.max(1, Math.min(4, Math.floor(barsLen||1)));
@@ -2860,7 +2866,7 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
       quizStartTime = ctl.t0;
       const __beats = (typeof beatsPerBar === "number" && beatsPerBar>0) ? beatsPerBar : 4;
       quizBarMs = __beats * tempoMs;
-      quizWantBars = Math.max(1, Math.min(4, Math.floor(barsLen||1)));
+      quizWantBars = Math.max(1, Math.min(4, Math.floor((quizTotalBars != null ? quizTotalBars : barsLen)||1)));
       __answerStep(true);
     }, 160);}
 
@@ -2890,7 +2896,9 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
         const off = Math.floor(elapsed / Math.max(1, quizBarMs));
         const maxOff = (quizWantBars != null) ? (quizWantBars - 1) : 3;
         const clamped = Math.max(0, Math.min(maxOff, off));
-        quizNowMeasure = quizStartMeasure + clamped;
+        const totalBars = (quizSongTotalBars != null) ? quizSongTotalBars : __calcSongTotalBars();
+        const lastMeasure = (totalBars != null) ? Math.max(0, totalBars - 1) : Infinity;
+        quizNowMeasure = Math.min(lastMeasure, quizStartMeasure + clamped);
         updateQuizBarInfo();
       }
     }catch(_e){}
