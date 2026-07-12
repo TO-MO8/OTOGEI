@@ -330,6 +330,11 @@ button, select, input[type="file"]{
         <div class="panel">
           <div class="k" style="margin-bottom:6px;">入力した音（メロディモードでは順番が大事）</div>
           <div class="seq" id="inputSeq"></div>
+          <div class="row" id="deferredAnswerControls" style="justify-content:flex-start; margin-top:10px; gap:8px;">
+            <button type="button" id="undoAnswerBtn">1音戻す</button>
+            <button type="button" id="clearAnswerBtn">全部消す</button>
+            <button type="button" id="checkAnswerBtn" class="primary">答え合わせ</button>
+          </div>
           <div class="line"></div>
           <div class="k" style="margin-bottom:6px;">判定</div>
           <div class="seq" id="judgeSeq"></div>
@@ -388,6 +393,14 @@ button, select, input[type="file"]{
               <select id="modeSel">
                 <option value="melody">メロディ当て</option>
                 <option value="chord2">2音コード当て（キー変化）</option>
+              </select>
+            </label>
+
+            <label>
+              <span>回答方式</span>
+              <select id="answerModeSel">
+                <option value="immediate">即時判定</option>
+                <option value="deferred" selected>入力してから答え合わせ</option>
               </select>
             </label>
 
@@ -525,7 +538,7 @@ window.sampleCache = window.sampleCache || new Map();
 window.sampleBufCache = window.sampleCache;
 
 
-const __APP_BUILD_ID__ = "BUILD 20260325-045"; // index.html を修正したコミットでは必ず更新する
+const __APP_BUILD_ID__ = "BUILD 20260325-046"; // index.html を修正したコミットでは必ず更新する
 window.__APP_BUILD_ID__ = __APP_BUILD_ID__;
 window.__buildVersionLogged = false;
 window.__liveSampleExceptionBadgeTimer = window.__liveSampleExceptionBadgeTimer || 0;
@@ -2033,6 +2046,8 @@ window.soundMode = soundMode;
 
   let input = [];
   let inputTimings = [];
+  let answerMode = "deferred";
+  let answerSubmitted = false;
 
   let score = 0;
   let streak = 0;
@@ -2050,6 +2065,10 @@ window.soundMode = soundMode;
 
   const inputSeq = document.getElementById("inputSeq");
   const judgeSeq = document.getElementById("judgeSeq");
+  const deferredAnswerControls = document.getElementById("deferredAnswerControls");
+  const undoAnswerBtn = document.getElementById("undoAnswerBtn");
+  const clearAnswerBtn = document.getElementById("clearAnswerBtn");
+  const checkAnswerBtn = document.getElementById("checkAnswerBtn");
 
   const newBtn = document.getElementById("newBtn");
   const playBtn = document.getElementById("playBtn");
@@ -2061,6 +2080,7 @@ window.soundMode = soundMode;
 
   const modeSel = document.getElementById("modeSel");
   try{ if(modeSel) modeSel.value = "melody"; }catch(e){}
+  const answerModeSel = document.getElementById("answerModeSel");
 
   const srcSel = document.getElementById("srcSel");
   setTimeout(()=>{ try{ refreshSongUi(); }catch(e){} }, 0);
@@ -2165,8 +2185,16 @@ window.soundMode = soundMode;
       targetEl.appendChild(chip);
     });
   }
+
+  function syncDeferredAnswerControls(){
+    const deferred = answerMode === "deferred";
+    if (deferredAnswerControls) deferredAnswerControls.style.display = deferred ? "flex" : "none";
+    if (undoAnswerBtn) undoAnswerBtn.disabled = answerSubmitted || !input.length;
+    if (clearAnswerBtn) clearAnswerBtn.disabled = answerSubmitted || !input.length;
+    if (checkAnswerBtn) checkAnswerBtn.disabled = answerSubmitted || !answer.length;
+  }
   function updateHeader(){
-    modeV.textContent = `メロディ当て（${barsLen}小節）`;
+    modeV.textContent = (mode === MODE.chord2) ? "2音コード当て（キー変化）" : `メロディ当て（${barsLen}小節）`;
     scoreV.textContent = score;
     streakV.textContent = streak;
   }
@@ -2229,8 +2257,10 @@ if(quizNowBarEl) quizNowBarEl.textContent = (quizNowMeasure != null) ? String(qu
   function resetRoundUI(){
     input = [];
     inputTimings = [];
+    answerSubmitted = false;
     renderChips(inputSeq, [], null);
     renderChips(judgeSeq, [], null);
+    syncDeferredAnswerControls();
   }
 
   function randNote(){
@@ -2938,7 +2968,7 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
 
   
 
-  function judgeChord2(){
+  function judgeChord2(opts={}){
     const ref = answerTimings[0] ?? inputTimings[0] ?? performance.now();
     const t1 = inputTimings[0] ?? performance.now();
     const t2 = inputTimings[1] ?? t1;
@@ -2949,7 +2979,9 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
     const pitchOk = (got.size === exp.size) && [...got].every(n => exp.has(n));
 
     let overall = "MISS";
-    if (pitchOk){
+    if (pitchOk && opts.pitchOnly){
+      overall = "PERFECT";
+    } else if (pitchOk){
       if (diff <= perfectMs) overall = "PERFECT";
       else if (diff <= goodMs) overall = "GOOD";
       else if (diff <= okMs) overall = "OK";
@@ -2958,7 +2990,7 @@ try{ window.playNoteOut = playNoteOut; }catch(e){}
     return {diff, pitchOk, overall};
   }
 
-function judgeMelody(){
+function judgeMelody(opts={}){
     const results = [];
     for (let i=0;i<answer.length;i++){
       const got = input[i];
@@ -2969,7 +3001,9 @@ function judgeMelody(){
 
       const pitchOk = (got === exp);
 let overall = "MISS";
-if (pitchOk){
+if (pitchOk && opts.pitchOnly){
+  overall = "PERFECT";
+} else if (pitchOk){
   if (diff <= perfectMs) overall = "PERFECT";
   else if (diff <= goodMs) overall = "GOOD";
   else if (diff <= okMs) overall = "OK";
@@ -3027,6 +3061,62 @@ else if (allOkOrBetter) grade = "OK";
     return Math.max(1, (Array.isArray(answer) && answer.length) ? answer.length : melodyLen);
   }
 
+  function submitDeferredAnswer(){
+    if (answerMode !== "deferred" || answerSubmitted || !answer.length) return;
+    answerSubmitted = true;
+    const rows = [];
+    let correctCount = 0;
+
+    if (mode === MODE.chord2){
+      const judged = judgeChord2({ pitchOnly:true });
+      const usedAnswer = new Set();
+      const unmatchedInput = [];
+      input.forEach((got, i) => {
+        const match = answer.findIndex((exp, j) => !usedAnswer.has(j) && exp === got);
+        if (match >= 0 && i < answer.length){
+          usedAnswer.add(match);
+          correctCount++;
+          rows.push({ text:`OK: ${noteLabel(got)} / 正: ${noteLabel(answer[match])}`, ok:true });
+        } else {
+          unmatchedInput.push({ got, index:i });
+        }
+      });
+      const unmatchedAnswer = answer.map((exp, i) => ({ exp, index:i })).filter(x => !usedAnswer.has(x.index));
+      unmatchedInput.forEach((x, i) => {
+        const missing = unmatchedAnswer[i];
+        if (x.index >= answer.length || !missing) rows.push({ text:`余分な入力: ${noteLabel(x.got)}`, ok:false });
+        else rows.push({ text:`MISS: ${noteLabel(x.got)} / 正: ${noteLabel(missing.exp)}`, ok:false });
+      });
+      for (let i=unmatchedInput.length; i<unmatchedAnswer.length; i++){
+        rows.push({ text:`未入力 / 正: ${noteLabel(unmatchedAnswer[i].exp)}`, ok:false });
+      }
+      const total = Math.max(answer.length, input.length);
+      const wrongCount = Math.max(0, total - correctCount);
+      const rate = total ? Math.round(correctCount * 100 / total) : 0;
+      rows.push({ text:`正解数: ${correctCount} / 間違い数: ${wrongCount} / 正解率: ${rate}%`, ok:wrongCount===0 });
+      renderChips(judgeSeq, rows.map(x=>x.text), (t,i)=>rows[i].ok ? "ok" : "ng");
+      award(judged.pitchOk && input.length === answer.length ? judged.overall : "MISS");
+    } else {
+      const judged = judgeMelody({ pitchOnly:true });
+      const total = Math.max(answer.length, input.length);
+      for (let i=0; i<total; i++){
+        const got = input[i];
+        const exp = answer[i];
+        if (got == null) rows.push({ text:`未入力 / 正: ${noteLabel(exp)}`, ok:false });
+        else if (exp == null) rows.push({ text:`余分な入力: ${noteLabel(got)}`, ok:false });
+        else if (got === exp){ correctCount++; rows.push({ text:`OK: ${noteLabel(got)} / 正: ${noteLabel(exp)}`, ok:true }); }
+        else rows.push({ text:`MISS: ${noteLabel(got)} / 正: ${noteLabel(exp)}`, ok:false });
+      }
+      const wrongCount = Math.max(0, total - correctCount);
+      const rate = total ? Math.round(correctCount * 100 / total) : 0;
+      rows.push({ text:`正解数: ${correctCount} / 間違い数: ${wrongCount} / 正解率: ${rate}%`, ok:wrongCount===0 });
+      renderChips(judgeSeq, rows.map(x=>x.text), (t,i)=>rows[i].ok ? "ok" : "ng");
+      award(wrongCount === 0 ? judged.grade : "MISS");
+    }
+    if (correctCount !== Math.max(answer.length, input.length)) showAnswerHint();
+    syncDeferredAnswerControls();
+  }
+
   async function onPressNote(note){
   try{
     ensureAudio();
@@ -3044,9 +3134,16 @@ else if (allOkOrBetter) grade = "OK";
 
     const now = performance.now();
     const gotKey = noteKey(note, octave);
+    if (answerMode === "deferred" && answerSubmitted) return;
     input.push(gotKey);
     inputTimings.push(now);
     renderChips(inputSeq, input.map(noteLabel), null);
+
+    if (answerMode === "deferred"){
+      msgEl.textContent = `回答入力中：${input.length}音（答え合わせまでは判定しません）`;
+      syncDeferredAnswerControls();
+      return;
+    }
 
     if (mode === MODE.single){
       const r = judgeSingle(gotKey, now);
@@ -3099,6 +3196,7 @@ else if (allOkOrBetter) grade = "OK";
     resetRoundUI();
     try{ __updateKeyBox(); }catch(e){}
     buildAnswer();
+    syncDeferredAnswerControls();
     setState("LISTEN", "warn");
     msgEl.textContent = "聴く準備…";
     playAnswer();
@@ -3135,6 +3233,23 @@ else if (allOkOrBetter) grade = "OK";
   });
 playBtn.addEventListener("click", () => { ensureAudio(); if (soundMode === "sample") ensurePreload(); playAnswer(); });
   resetBtn.addEventListener("click", () => resetAll());
+  if (undoAnswerBtn) undoAnswerBtn.addEventListener("click", () => {
+    if (answerMode !== "deferred" || answerSubmitted) return;
+    input.pop(); inputTimings.pop();
+    renderChips(inputSeq, input.map(noteLabel), null);
+    syncDeferredAnswerControls();
+  });
+  if (clearAnswerBtn) clearAnswerBtn.addEventListener("click", () => {
+    if (answerMode !== "deferred" || answerSubmitted) return;
+    input = []; inputTimings = [];
+    renderChips(inputSeq, [], null);
+    syncDeferredAnswerControls();
+  });
+  if (checkAnswerBtn) checkAnswerBtn.addEventListener("click", submitDeferredAnswer);
+  if (answerModeSel) answerModeSel.addEventListener("change", () => {
+    answerMode = answerModeSel.value === "immediate" ? "immediate" : "deferred";
+    resetRoundUI();
+  });
 
   function __getMeasureStarts(){
     const s = (window.SONGS && window.SONGS[songKey]) ? window.SONGS[songKey] : null;
@@ -4135,8 +4250,7 @@ if (barPrevBtn) barPrevBtn.addEventListener("click", ()=>{ const cur=__currentMe
 
   modeSel.addEventListener("change", () => {
     // 単音あては廃止：常にメロディ当て
-    mode = MODE.melody;
-    try{ modeSel.value = "melody"; }catch(e){}
+    mode = modeSel.value === "chord2" ? MODE.chord2 : MODE.melody;
     resetAll();
       try{ updateQuizBarInfo(); }catch(_e){}
   });
